@@ -257,6 +257,20 @@ class Bridge:
             self._passthrough(flow, "bypass")
             return
 
+        if self._targets_self(flow):
+            # A browser pointed straight at the proxy port with no proxy configured
+            # sends an origin-form request, which mitmproxy reconstructs as a URL
+            # aimed back at us. Fetching it would loop until the deadline and report
+            # a timeout, which reads like a network fault rather than a misconfigured
+            # client.
+            self._fail(
+                flow, 421,
+                "this request targets the proxy's own listen address. Configure "
+                "the proxy in your client's network settings rather than browsing "
+                "to the proxy port directly.",
+            )
+            return
+
         body = flow.request.raw_content or b""
         if len(body) > ctx.options.mitmcloak_max_body:
             self._passthrough(flow, "body")
@@ -362,6 +376,17 @@ class Bridge:
             path.write_text(json.dumps(doc, indent=2))
         except OSError as exc:
             logger.warning("mitmcloak: could not export %s: %s", path, exc)
+
+    @staticmethod
+    def _targets_self(flow) -> bool:
+        try:
+            listen_port = int(ctx.options.listen_port or 0)
+        except (TypeError, ValueError):
+            return False
+        if flow.request.port != listen_port:
+            return False
+        sock = flow.client_conn.sockname
+        return bool(sock) and flow.request.pretty_host == sock[0]
 
     @staticmethod
     def _is_websocket(flow) -> bool:
