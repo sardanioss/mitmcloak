@@ -256,6 +256,22 @@ cannot `dlopen` ([golang/go#54805](https://github.com/golang/go/issues/54805)). 
 image such as `python:3.12-slim`. mitmcloak raises a clear error at import rather than
 letting you find out later.
 
+## Proxy modes
+
+| mode | status |
+|---|---|
+| `regular` (default) | works, with mirroring |
+| `socks5` | works, with mirroring |
+| `upstream:...` | works; the upstream proxy is handed to httpcloak, see below |
+| `reverse:...` | works, but the client speaks plain HTTP to the local port, so there is no ClientHello to mirror and the static preset governs |
+| `transparent`, `wireguard`, `local` | untested |
+
+**On upstream mode.** mitmproxy would normally forward everything to the proxy you named,
+but the short circuit means it never gets that far. Left alone, your proxy would be
+silently bypassed and requests would leave from the real address while you believed
+otherwise. mitmcloak reads `--mode upstream:` and hands that proxy to httpcloak instead.
+An explicit `--set mitmcloak_proxy=` wins if you set both.
+
 ## Load order
 
 mitmcloak's `request` hook runs in addon registration order, so load it **last** if you have

@@ -100,6 +100,23 @@ def register(loader) -> None:
         loader.add_option(name, int, 0, help_text)
 
 
+def upstream_from_mode(opts) -> str | None:
+    """The proxy mitmproxy was told to chain through, if any.
+
+    In upstream mode mitmproxy would normally forward everything to another proxy. We
+    short-circuit before it ever gets the chance, so without this the configured proxy
+    is silently bypassed and requests leave from the real address while the operator
+    believes otherwise. Honour it by handing it to httpcloak instead.
+    """
+    for entry in (getattr(opts, "mode", None) or []):
+        if entry.startswith("upstream:"):
+            target = entry.split(":", 1)[1].strip()
+            if target and "://" not in target:
+                target = "http://" + target
+            return target or None
+    return None
+
+
 def session_options(opts) -> dict:
     """Collect the option values that become httpcloak.Session kwargs."""
     out: dict = {
@@ -111,6 +128,10 @@ def session_options(opts) -> dict:
         out["disable_ech"] = True
     if opts.mitmcloak_tls_only:
         out["tls_only"] = True
+    # An explicit mitmcloak_proxy wins; otherwise inherit mitmproxy's upstream mode.
+    upstream = upstream_from_mode(opts)
+    if upstream:
+        out["proxy"] = upstream
     for name, dest, _default, _help in PASSTHROUGH_STR:
         value = getattr(opts, name, "")
         if value:

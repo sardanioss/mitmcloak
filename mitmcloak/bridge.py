@@ -152,6 +152,13 @@ class Bridge:
                 "TLS connection before the request hook and leaks a Python ClientHello"
             )
         self._apply_overrides()
+        upstream = opts_mod.upstream_from_mode(ctx.options)
+        if upstream and not ctx.options.mitmcloak_proxy:
+            logger.info(
+                "mitmcloak: chaining the httpcloak leg through the upstream proxy %s, "
+                "since the short circuit means mitmproxy never reaches it itself",
+                upstream,
+            )
         self._sweeper = asyncio.ensure_future(self._sweep_loop())
         import httpcloak
 

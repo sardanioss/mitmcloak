@@ -243,3 +243,42 @@ def test_catalogue_upgrades_an_entry_when_the_h2_half_arrives():
     assert not cat.entries[info.stable_id].complete
     cat.note_h2(info.stable_id, capture.H2Preface(settings=[(1, 65536)]))
     assert cat.entries[info.stable_id].complete
+
+
+def test_upstream_mode_is_handed_to_httpcloak():
+    """Otherwise the operator's proxy is silently bypassed and requests leave from
+    the real address while they believe they are chained."""
+    from mitmcloak.options import upstream_from_mode
+
+    class O:
+        mode = ["upstream:http://127.0.0.1:8080"]
+    assert upstream_from_mode(O) == "http://127.0.0.1:8080"
+
+
+def test_upstream_mode_gains_a_scheme_when_bare():
+    from mitmcloak.options import upstream_from_mode
+
+    class O:
+        mode = ["upstream:127.0.0.1:8080"]
+    assert upstream_from_mode(O) == "http://127.0.0.1:8080"
+
+
+def test_regular_mode_has_no_upstream():
+    from mitmcloak.options import upstream_from_mode
+
+    class O:
+        mode = ["regular"]
+    assert upstream_from_mode(O) is None
+
+
+def test_explicit_proxy_option_wins_over_upstream_mode():
+    from mitmcloak.options import session_options
+
+    class O:
+        mode = ["upstream:http://from-mode:8080"]
+        mitmcloak_timeout = 30; mitmcloak_verify = True
+        mitmcloak_http_version = "auto"; mitmcloak_disable_ech = False
+        mitmcloak_tls_only = False; mitmcloak_proxy = "http://explicit:9090"
+        mitmcloak_ja3 = ""; mitmcloak_akamai = ""
+        mitmcloak_tcp_ttl = 0; mitmcloak_tcp_mss = 0; mitmcloak_tcp_window_size = 0
+    assert session_options(O)["proxy"] == "http://explicit:9090"
