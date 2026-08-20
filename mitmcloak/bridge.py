@@ -91,7 +91,11 @@ class Bridge:
             "passthrough_bypass": 0, "passthrough_other": 0,
             "captured_hellos": 0, "captured_h2": 0,
             "base_from_tls": 0, "base_from_user_agent": 0,
+            "observed_only": 0, "tls_refused": 0,
         }
+        self._requested: set[str] = set()
+        """Client connections that produced at least one request we could act on."""
+        self._refused_hosts: set[str] = set()
 
     # ------------------------------------------------------------------ options
 
@@ -242,9 +246,47 @@ class Bridge:
         profile.h2 = preface
         self.stats["captured_h2"] += 1
 
+    def tls_failed_client(self, data) -> None:
+        """The client rejected our certificate. Its fingerprint is still ours.
+
+        Pinning stops us reading an app's traffic. It does not stop us reading its
+        ClientHello, which arrived in plaintext before the trust decision was made.
+        """
+        self.stats["tls_refused"] += 1
+        host = getattr(data.context.server, "address", None)
+        host = host[0] if host else None
+        if host and host not in self._refused_hosts:
+            self._refused_hosts.add(host)
+            logger.info(
+                "mitmcloak: %s refused our certificate, so its traffic stays opaque. "
+                "Its TLS fingerprint was captured anyway.", host,
+            )
+
     def client_disconnected(self, client) -> None:
-        self._profiles.pop(client.id, None)
+        profile = self._profiles.pop(client.id, None)
         self._presets_for_conn.pop(client.id, None)
+        made_request = client.id in self._requested
+        self._requested.discard(client.id)
+        if profile is None or made_request:
+            return
+        # A connection that produced a hello but never a request we could act on: a
+        # pinned app, a failed handshake, or a client that hung up. The fingerprint is
+        # the whole point of capturing it, so keep it rather than letting it die with
+        # the connection. Only reachable because the base now comes from the TLS stack;
+        # there is no User-Agent to fall back on here.
+        self._record_observed(profile)
+
+    def _record_observed(self, profile: ClientProfile) -> None:
+        base = None
+        if ctx.options.mitmcloak_identify_by_tls:
+            base = self.identifier.match(profile.hello.family_id)
+        if base is None:
+            base = self._preset()
+        name = self.mirror.ensure(profile, base)
+        if name is None:
+            return
+        self.stats["observed_only"] += 1
+        self._export(name)
 
     # -------------------------------------------------------------- the bridge
 
@@ -328,6 +370,7 @@ class Bridge:
         if getattr(response, "protocol", None):
             resp.http_version = _wire_version(response.protocol)
         flow.response = resp
+        self._requested.add(flow.client_conn.id)
         flow.metadata["mitmcloak"] = {
             "preset": decision.preset,
             "via": decision.reason,

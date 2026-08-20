@@ -168,9 +168,23 @@ own fingerprint. mitmcloak counts these and logs the host once so the gap is vis
 than silent. The apps most likely to be excluded are the pinned ones, which are often the
 apps you most wanted covered.
 
-The consolation: **fingerprint capture and interception are separable**. A pinned app can
-be bypassed and mitmcloak will still record its exact TLS fingerprint, because the hook
-fires before the ignore decision takes effect. You can fingerprint what you cannot decrypt.
+The consolation: **fingerprint capture and interception are separable**. An app that
+refuses your CA still sends its ClientHello in plaintext first, and mitmcloak keeps it.
+Those fingerprints are written out like any other, with the H2 block absent because the
+connection never got that far. You can fingerprint what you cannot decrypt.
+
+Worth knowing why an app "stops working", because there are three unrelated causes and
+none of them is detection:
+
+- **Certificate pinning.** The app carries its own trust store and refuses any CA it does
+  not already know. Logged as `tls alert certificate unknown`.
+- **QUIC.** Instagram and Facebook default to HTTP/3 over UDP, and an OS proxy setting
+  only redirects TCP, so that traffic never reaches the proxy at all.
+- **Apps that ignore the proxy setting.** WhatsApp runs its own transport on port 443
+  rather than standard TLS.
+
+All three fail at or before the handshake, which is earlier than mitmcloak acts. Plain
+mitmproxy behaves identically.
 
 **`serverconnect` and `serverconnected` hooks do not fire** on bridged flows, because there
 is no upstream connection to announce. If you have an existing addon stack that depends on

@@ -195,3 +195,15 @@ def test_real_iphone_capture_identifies_as_ios():
             base64.b64decode(json.loads(captures[0].read_text())
                              ["preset"]["tls"]["raw_client_hello"])
         ).family_id
+
+
+def test_pinned_client_profile_is_still_a_usable_preset():
+    """A client that refuses our CA never sends a request, so it never gets a
+    User-Agent. Its preset must still build, which only works because the base now
+    comes from the TLS stack."""
+    info = capture.parse_client_hello(_chrome())
+    profile = mirror.ClientProfile(hello=info)      # no h2, no request, no UA
+    doc = mirror.build_preset(profile, "chrome-151-windows", "mc-pinned")["preset"]
+    assert doc["based_on"] == "chrome-151-windows"
+    assert doc["tls"]["raw_client_hello"]
+    assert "http2" not in doc                        # never got past the handshake
