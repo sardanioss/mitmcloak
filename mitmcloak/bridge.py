@@ -20,6 +20,7 @@ from mitmproxy import command, ctx, exceptions, http
 from mitmproxy import types as mtypes
 
 from . import capture, headers as hdrs, options as opts_mod
+from .catalogue import Catalogue
 from .identify import BaseIdentifier
 from .mirror import (
     ClientProfile, MirrorRegistry, base_for_user_agent, refine_platform,
@@ -74,6 +75,7 @@ class Bridge:
         self.pool = SessionPool()
         self.mirror = MirrorRegistry()
         self.identifier = BaseIdentifier()
+        self.catalogue = Catalogue()
         self.resolver = Resolver()
         self.resolver.session_factory = session
 
@@ -116,6 +118,11 @@ class Bridge:
             self.pool.max_idle = ctx.options.mitmcloak_max_idle
         if "mitmcloak_export_dir" in updated and ctx.options.mitmcloak_export_dir:
             Path(ctx.options.mitmcloak_export_dir).mkdir(parents=True, exist_ok=True)
+        if "mitmcloak_catalogue_dir" in updated:
+            self.catalogue.directory = (
+                Path(ctx.options.mitmcloak_catalogue_dir).expanduser()
+                if ctx.options.mitmcloak_catalogue_dir else None
+            )
 
     def _load_preset_files(self, paths) -> None:
         import httpcloak
@@ -176,6 +183,12 @@ class Bridge:
             pass
 
     def done(self) -> None:
+        written = self.catalogue.flush(self._base_for_identity)
+        if written:
+            logger.info(
+                "mitmcloak: catalogued %d fingerprint(s) to %s",
+                written, self.catalogue.directory,
+            )
         if self._sweeper is not None:
             self._sweeper.cancel()
         for task in list(self._inflight):
@@ -215,6 +228,7 @@ class Bridge:
             logger.debug("mitmcloak: could not parse ClientHello: %s", exc)
             return
         self.stats["captured_hellos"] += 1
+        self.catalogue.note_hello(info)
         conn_id = data.context.client.id
         profile = self._profiles.get(conn_id)
         if profile is None:
@@ -244,6 +258,7 @@ class Bridge:
         if profile is None or profile.h2 is not None:
             return
         profile.h2 = preface
+        self.catalogue.note_h2(profile.hello.stable_id, preface)
         self.stats["captured_h2"] += 1
 
     def tls_failed_client(self, data) -> None:
@@ -253,6 +268,9 @@ class Bridge:
         ClientHello, which arrived in plaintext before the trust decision was made.
         """
         self.stats["tls_refused"] += 1
+        seen = self._profiles.get(data.context.client.id)
+        if seen is not None:
+            self.catalogue.note_refused(seen.hello.stable_id)
         host = getattr(data.context.server, "address", None)
         host = host[0] if host else None
         if host and host not in self._refused_hosts:
@@ -277,16 +295,17 @@ class Bridge:
         self._record_observed(profile)
 
     def _record_observed(self, profile: ClientProfile) -> None:
-        base = None
-        if ctx.options.mitmcloak_identify_by_tls:
-            base = self.identifier.match(profile.hello.family_id)
-        if base is None:
-            base = self._preset()
-        name = self.mirror.ensure(profile, base)
-        if name is None:
-            return
         self.stats["observed_only"] += 1
-        self._export(name)
+        self.catalogue.note_no_request(profile.hello.stable_id)
+        self.catalogue.flush(self._base_for_identity)
+
+    def _base_for_identity(self, stable_id: str) -> str:
+        entry = self.catalogue.entries.get(stable_id)
+        if entry is not None and ctx.options.mitmcloak_identify_by_tls:
+            match = self.identifier.match(entry.hello.family_id)
+            if match is not None:
+                return match
+        return self._preset()
 
     # -------------------------------------------------------------- the bridge
 
@@ -371,6 +390,9 @@ class Bridge:
             resp.http_version = _wire_version(response.protocol)
         flow.response = resp
         self._requested.add(flow.client_conn.id)
+        seen = self._profiles.get(flow.client_conn.id)
+        if seen is not None:
+            self.catalogue.note_request(seen.hello.stable_id)
         flow.metadata["mitmcloak"] = {
             "preset": decision.preset,
             "via": decision.reason,
@@ -540,6 +562,23 @@ class Bridge:
             (target / f"{name}.json").write_text(json.dumps(doc, indent=2))
             written += 1
         return f"wrote {written} preset(s) to {target}"
+
+    @command.command("mitmcloak.catalogue")
+    def cmd_catalogue(self) -> Sequence[str]:
+        """Every distinct TLS fingerprint seen, used or not."""
+        return self.catalogue.summary()
+
+    @command.command("mitmcloak.catalogue.save")
+    def cmd_catalogue_save(self, directory: mtypes.Path) -> str:
+        """Write every observed fingerprint out as a loadable preset file."""
+        previous = self.catalogue.directory
+        self.catalogue.directory = Path(str(directory))
+        self.catalogue._written.clear()
+        try:
+            written = self.catalogue.flush(self._base_for_identity)
+        finally:
+            self.catalogue.directory = previous
+        return f"wrote {written} fingerprint(s) to {directory}"
 
     @command.command("mitmcloak.stats")
     def cmd_stats(self) -> str:

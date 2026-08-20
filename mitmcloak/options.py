@@ -69,6 +69,12 @@ def register(loader) -> None:
         choices=["origin", "client", "connection"],
     )
     loader.add_option(
+        "mitmcloak_catalogue_dir", str, "",
+        "Write every distinct TLS fingerprint seen into this directory, whether or "
+        "not it was ever used. Entries are loadable preset files, so anything the "
+        "proxy watched go past can be turned into a preset later.",
+    )
+    loader.add_option(
         "mitmcloak_identify_by_tls", bool, True,
         "Choose a mirrored client's base preset by matching its TLS stack against the "
         "built-in presets, falling back to the User-Agent. Apps and system agents "

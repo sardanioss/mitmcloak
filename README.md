@@ -53,6 +53,48 @@ Measured against six clients, each compared direct and through the proxy:
 Cost: about 2.6 ms once per *distinct* fingerprint, because preset names are
 content-addressed. It does not show up in the latency budget.
 
+### Cataloguing everything that goes past
+
+Mirroring only builds presets for clients we actually serve. Most of what a proxy sees is
+not that: a pinned app that refused the certificate, a background agent that made one
+request and left, a client that hung up. Those fingerprints are worth keeping too.
+
+```bash
+mitmdump --set mitmcloak_catalogue_dir=./seen
+```
+
+Every distinct TLS fingerprint observed lands there, used or not, with what was seen
+alongside it:
+
+```jsonc
+{
+  "version": 1,
+  "preset": { "name": "observed-aa12047efcd3", "based_on": "chrome-151-ios", "tls": {...} },
+  "_observed": {
+    "hosts": ["gateway.icloud.com", "support.apple.com"],
+    "connections": 22, "requests": 0,
+    "rejected_our_certificate": 22,
+    "connections_without_a_request": 22,
+    "tls_only": true,
+    "grease": true, "alpn": ["h2", "http/1.1"]
+  }
+}
+```
+
+Those files are **valid preset documents**, so anything the proxy watched can become a
+preset with no conversion:
+
+```python
+httpcloak.load_preset("seen/observed-aa12047efcd3.json")
+```
+
+The `_observed` block rides alongside and is ignored on load. `tls_only: true` means only
+the TLS half was captured, because the connection never got far enough to show its HTTP/2
+preface, so that layer comes from `based_on`.
+
+`mitmcloak.catalogue` lists what has been seen and `mitmcloak.catalogue.save <dir>` writes
+it out on demand.
+
 ### Keeping a fingerprint without keeping the device
 
 ```bash

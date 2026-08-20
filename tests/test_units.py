@@ -207,3 +207,39 @@ def test_pinned_client_profile_is_still_a_usable_preset():
     assert doc["based_on"] == "chrome-151-windows"
     assert doc["tls"]["raw_client_hello"]
     assert "http2" not in doc                        # never got past the handshake
+
+
+def test_catalogue_records_a_client_that_never_sent_a_request():
+    from mitmcloak.catalogue import Catalogue
+
+    info = capture.parse_client_hello(_chrome())
+    cat = Catalogue()
+    cat.note_hello(info)
+    cat.note_no_request(info.stable_id)
+    doc = cat.document(info.stable_id, "chrome-151-windows")
+    assert doc["_observed"]["connections_without_a_request"] == 1
+    assert doc["_observed"]["tls_only"] is True      # no H2 preface was ever seen
+    assert doc["preset"]["tls"]["raw_client_hello"]
+
+
+def test_catalogue_entry_is_a_loadable_preset_document():
+    """The _observed block rides alongside; Go ignores unknown top-level fields."""
+    from mitmcloak.catalogue import Catalogue
+
+    info = capture.parse_client_hello(_chrome())
+    cat = Catalogue()
+    cat.note_hello(info)
+    doc = cat.document(info.stable_id, "chrome-151-windows")
+    assert doc["version"] == 1
+    assert set(doc) == {"version", "preset", "_observed"}
+
+
+def test_catalogue_upgrades_an_entry_when_the_h2_half_arrives():
+    from mitmcloak.catalogue import Catalogue
+
+    info = capture.parse_client_hello(_chrome())
+    cat = Catalogue()
+    cat.note_hello(info)
+    assert not cat.entries[info.stable_id].complete
+    cat.note_h2(info.stable_id, capture.H2Preface(settings=[(1, 65536)]))
+    assert cat.entries[info.stable_id].complete
