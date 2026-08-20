@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mitmcloak"
+version = "0.1.0"
+description = "Give mitmproxy's upstream leg a real browser's TLS and HTTP/2 fingerprint"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = ["mitmproxy", "tls", "fingerprint", "ja3", "ja4", "http2", "addon", "proxy"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Internet :: Proxy Servers",
+  "Topic :: Security",
+]
+dependencies = [
+  "mitmproxy>=11",
+  "httpcloak>=1.6.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/sardanioss/mitmcloak"
+Issues = "https://github.com/sardanioss/mitmcloak/issues"
+
+[tool.setuptools]
+packages = ["mitmcloak"]

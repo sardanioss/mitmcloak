@@ -1,0 +1,110 @@
+"""mitmproxy option registration and validation.
+
+Everything reachable from Python is reachable from `--set` and from mitmweb's option
+editor, where a `choices` list renders as a dropdown.
+"""
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from . import headers as _headers
+
+MODES = ("auto", "static", "mirror")
+
+# Passed straight through to httpcloak.Session. Deliberately not an allowlist of
+# everything Session accepts: these are the ones worth a CLI flag. Anything else goes
+# through the Python API, where kwargs are forwarded untouched.
+PASSTHROUGH_STR = (
+    ("mitmcloak_proxy", "proxy", "", "Upstream proxy for the httpcloak leg"),
+    ("mitmcloak_ja3", "ja3", "", "JA3 override for the static preset"),
+    ("mitmcloak_akamai", "akamai", "", "Akamai H2 override for the static preset"),
+)
+PASSTHROUGH_INT = (
+    ("mitmcloak_tcp_ttl", "tcp_ttl", "TCP TTL override"),
+    ("mitmcloak_tcp_mss", "tcp_mss", "TCP MSS override"),
+    ("mitmcloak_tcp_window_size", "tcp_window_size", "TCP window size override"),
+)
+
+
+def register(loader) -> None:
+    loader.add_option(
+        "mitmcloak_preset", str, "chrome-151-windows",
+        "Preset for the upstream leg when not mirroring.",
+    )
+    loader.add_option(
+        "mitmcloak_mode", str, "auto",
+        "auto mirrors the real client when its fingerprint was captured and falls "
+        "back to the static preset otherwise; static always uses the preset; mirror "
+        "refuses to fall back.",
+        choices=list(MODES),
+    )
+    loader.add_option(
+        "mitmcloak_headers", str, "merge",
+        "merge keeps the client's header values inside the preset's block; replace "
+        "keeps only semantic headers and lets the preset supply the rest.",
+        choices=list(_headers.MODES),
+    )
+    loader.add_option(
+        "mitmcloak_preset_file", Sequence[str], [],
+        "Path to a JSON preset file to load at startup. Repeatable.",
+    )
+    loader.add_option(
+        "mitmcloak_rule", Sequence[str], [],
+        'Per-flow preset selection: "/<flow filter>/<preset>", any separator. '
+        'Example: "/~d .*\\.example\\.com/chrome-151-ios". Repeatable, first match wins.',
+    )
+    loader.add_option(
+        "mitmcloak_bypass", str, "",
+        "Flow filter for requests that should not be bridged at all.",
+    )
+    loader.add_option(
+        "mitmcloak_http_version", str, "auto",
+        "Upstream protocol for the httpcloak leg.",
+        choices=["auto", "h1", "h2", "h3"],
+    )
+    loader.add_option(
+        "mitmcloak_session_scope", str, "origin",
+        "origin gives one upstream connection per origin, which is what a browser "
+        "does; client and connection trade that coherence for identity separation.",
+        choices=["origin", "client", "connection"],
+    )
+    loader.add_option("mitmcloak_max_sessions", int, 256, "Session pool cap.")
+    loader.add_option("mitmcloak_max_idle", int, 300, "Seconds before an idle session is swept.")
+    loader.add_option(
+        "mitmcloak_max_body", int, 50 * 1024 * 1024,
+        "Requests with a body over this are handed back to mitmproxy unbridged.",
+    )
+    loader.add_option("mitmcloak_timeout", int, 30, "Upstream request timeout in seconds.")
+    loader.add_option("mitmcloak_verify", bool, True, "Verify upstream certificates.")
+    loader.add_option("mitmcloak_disable_ech", bool, False, "Disable Encrypted Client Hello.")
+    loader.add_option("mitmcloak_tls_only", bool, False, "TLS-only mode on the upstream leg.")
+    loader.add_option(
+        "mitmcloak_export_dir", str, "",
+        "Directory to write every mirrored preset into, for reuse without the device.",
+    )
+    for name, _dest, default, help_text in PASSTHROUGH_STR:
+        loader.add_option(name, str, default, help_text)
+    for name, _dest, help_text in PASSTHROUGH_INT:
+        loader.add_option(name, int, 0, help_text)
+
+
+def session_options(opts) -> dict:
+    """Collect the option values that become httpcloak.Session kwargs."""
+    out: dict = {
+        "timeout": opts.mitmcloak_timeout,
+        "verify": opts.mitmcloak_verify,
+        "http_version": opts.mitmcloak_http_version,
+    }
+    if opts.mitmcloak_disable_ech:
+        out["disable_ech"] = True
+    if opts.mitmcloak_tls_only:
+        out["tls_only"] = True
+    for name, dest, _default, _help in PASSTHROUGH_STR:
+        value = getattr(opts, name, "")
+        if value:
+            out[dest] = value
+    for name, dest, _help in PASSTHROUGH_INT:
+        value = getattr(opts, name, 0)
+        if value:
+            out[dest] = value
+    return out
