@@ -33,6 +33,40 @@ _UA_BASES = (
 )
 
 
+_PLATFORM_TOKENS = (
+    ("iphone", "ios"), ("ipad", "ios"), ("android", "android"),
+    ("macintosh", "macos"), ("mac os", "macos"),
+    ("cros", "linux"), ("linux", "linux"), ("x11", "linux"),
+    ("windows", "windows"),
+)
+
+
+def platform_for_user_agent(ua: str) -> str | None:
+    ua = (ua or "").lower()
+    for needle, platform in _PLATFORM_TOKENS:
+        if needle in ua:
+            return platform
+    return None
+
+
+def refine_platform(base: str, ua: str, known: set) -> str:
+    """Let the User-Agent choose the platform within a TLS-matched family.
+
+    A stack's ClientHello identifies the browser but usually not the operating system:
+    Firefox on Linux and on Windows send the same one. So TLS decides the family and
+    the User-Agent decides the variant, which is the opposite way round from how each
+    signal fails. When the UA says nothing useful, the TLS match stands.
+    """
+    platform = platform_for_user_agent(ua)
+    if platform is None:
+        return base
+    head, _, current = base.rpartition("-")
+    if not head or current == platform:
+        return base
+    candidate = f"{head}-{platform}"
+    return candidate if candidate in known else base
+
+
 def base_for_user_agent(ua: str, fallback: str) -> str:
     ua = (ua or "").lower()
     # Firefox first: its UA also contains the platform tokens.

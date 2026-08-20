@@ -20,7 +20,10 @@ from mitmproxy import command, ctx, exceptions, http
 from mitmproxy import types as mtypes
 
 from . import capture, headers as hdrs, options as opts_mod
-from .mirror import ClientProfile, MirrorRegistry, base_for_user_agent
+from .identify import BaseIdentifier
+from .mirror import (
+    ClientProfile, MirrorRegistry, base_for_user_agent, refine_platform,
+)
 from .resolve import Resolver, session_key
 from .sessions import SessionPool, build_session, enforce_required_flags
 
@@ -70,6 +73,7 @@ class Bridge:
 
         self.pool = SessionPool()
         self.mirror = MirrorRegistry()
+        self.identifier = BaseIdentifier()
         self.resolver = Resolver()
         self.resolver.session_factory = session
 
@@ -78,6 +82,7 @@ class Bridge:
         self._sweeper: asyncio.Task | None = None
         self._inflight: set[asyncio.Task] = set()
         self._logged_passthrough: set[str] = set()
+        self._preset_names: set | None = None
 
         self.stats = {
             "bridged": 0, "mirrored": 0, "static": 0, "rule": 0, "supplied": 0,
@@ -85,6 +90,7 @@ class Bridge:
             "passthrough_websocket": 0, "passthrough_body": 0,
             "passthrough_bypass": 0, "passthrough_other": 0,
             "captured_hellos": 0, "captured_h2": 0,
+            "base_from_tls": 0, "base_from_user_agent": 0,
         }
 
     # ------------------------------------------------------------------ options
@@ -350,16 +356,36 @@ class Bridge:
         profile = self._profiles.get(conn_id)
         if profile is None:
             return None
-        # Built here rather than in tls_clienthello because the base preset is chosen
-        # from the User-Agent, which does not exist until a request arrives.
-        base = base_for_user_agent(
-            flow.request.headers.get("user-agent", ""), self._preset()
-        )
+        # Built here rather than in tls_clienthello because the User-Agent, which is
+        # the fallback signal for the base, does not exist until a request arrives.
+        #
+        # The TLS stack is asked first. A system agent or an app rarely puts a platform
+        # token in its User-Agent, and an iOS client falling through to a Chrome desktop
+        # base gets the wrong header block. The ClientHello does not lie about which
+        # stack produced it, and matching it against the built-in presets is exact.
+        base = None
+        if ctx.options.mitmcloak_identify_by_tls:
+            base = self.identifier.match(profile.hello.family_id)
+        base_from_tls = base is not None
+        user_agent = flow.request.headers.get("user-agent", "")
+        if base is None:
+            base = base_for_user_agent(user_agent, self._preset())
+            self.identifier.by_user_agent += 1
+        else:
+            base = refine_platform(base, user_agent, self._known_presets())
+        self.stats["base_from_tls" if base_from_tls else "base_from_user_agent"] += 1
         name = self.mirror.ensure(profile, base)
         if name is not None:
             self._presets_for_conn[conn_id] = name
             self._export(name)
         return name
+
+    def _known_presets(self) -> set:
+        if self._preset_names is None:
+            import httpcloak
+
+            self._preset_names = set(httpcloak.available_presets())
+        return self._preset_names
 
     def _export(self, name: str) -> None:
         directory = ctx.options.mitmcloak_export_dir

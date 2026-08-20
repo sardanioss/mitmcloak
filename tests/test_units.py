@@ -149,3 +149,49 @@ def test_pool_never_closes_a_supplied_session():
     pool.adopt(("a",), supplied)
     pool.get(("b",), _FakeSession)          # forces eviction of the supplied one
     assert not supplied.closed
+
+
+def test_family_id_ignores_alpn_but_stable_id_does_not():
+    """Safari and an HTTP/1.1-only system agent share a stack and want the same base."""
+    info = capture.parse_client_hello(_chrome())
+    h1_only = capture.ClientHelloInfo(
+        raw=info.raw, ja3=info.ja3, extension_order=info.extension_order,
+        signature_algorithms=info.signature_algorithms, alpn=["http/1.1"],
+        cert_compression=info.cert_compression, key_share_curves=info.key_share_curves,
+        record_size_limit=info.record_size_limit,
+    )
+    assert h1_only.family_id == info.family_id
+    assert h1_only.stable_id != info.stable_id
+
+
+def test_identity_ignores_sni_presence():
+    """A client omits SNI for a bare IP target; that is the request, not the client."""
+    info = capture.parse_client_hello(_chrome())
+    assert 0 in info.extension_order
+    without_sni = capture.ClientHelloInfo(
+        raw=info.raw, ja3=info.ja3,
+        extension_order=tuple(e for e in info.extension_order if e != 0),
+        signature_algorithms=info.signature_algorithms, alpn=info.alpn,
+        cert_compression=info.cert_compression, key_share_curves=info.key_share_curves,
+        record_size_limit=info.record_size_limit,
+    )
+    assert without_sni.family_id == info.family_id
+
+
+def test_real_iphone_capture_identifies_as_ios():
+    """Locks the device result: a physical iPhone's stack must resolve to the iOS preset."""
+    device = Path(__file__).resolve().parent.parent / "research" / "fixtures" / "device"
+    captures = sorted(device.glob("*.json"))
+    if not captures:
+        pytest.skip("no device capture fixture")
+    for path in captures:
+        doc = json.loads(path.read_text())["preset"]
+        info = capture.parse_client_hello(
+            base64.b64decode(doc["tls"]["raw_client_hello"])
+        )
+        # Every hello the iPhone produced, Safari and system agents alike, is Apple's
+        # stack and must land on one family.
+        assert info.family_id == capture.parse_client_hello(
+            base64.b64decode(json.loads(captures[0].read_text())
+                             ["preset"]["tls"]["raw_client_hello"])
+        ).family_id

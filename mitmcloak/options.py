@@ -68,6 +68,12 @@ def register(loader) -> None:
         "does; client and connection trade that coherence for identity separation.",
         choices=["origin", "client", "connection"],
     )
+    loader.add_option(
+        "mitmcloak_identify_by_tls", bool, True,
+        "Choose a mirrored client's base preset by matching its TLS stack against the "
+        "built-in presets, falling back to the User-Agent. Apps and system agents "
+        "rarely carry a platform token in their User-Agent.",
+    )
     loader.add_option("mitmcloak_max_sessions", int, 256, "Session pool cap.")
     loader.add_option("mitmcloak_max_idle", int, 300, "Seconds before an idle session is swept.")
     loader.add_option(

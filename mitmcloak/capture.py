@@ -62,6 +62,38 @@ class ClientHelloInfo:
     def raw_b64(self) -> str:
         return base64.b64encode(self.raw).decode("ascii")
 
+    def _identity_parts(self, include_alpn: bool) -> list[str]:
+        # Extension 0 is server_name, which a client omits when the target is a bare
+        # IP and sends when it is a hostname. That is a property of the request, not
+        # of the client, so including it would give one client two identities.
+        identifying = sorted(e for e in self.extension_order if e != 0)
+        parts = [
+            self.ja3.split(",")[0],                       # version
+            self.ja3.split(",")[1],                       # ciphers, in order
+            "-".join(str(x) for x in identifying),
+            self.ja3.split(",")[3],                       # curves
+            self.ja3.split(",")[4],                       # point formats
+            "-".join(str(x) for x in self.signature_algorithms),
+            ",".join(self.cert_compression),
+            str(self.key_share_curves),
+            str(self.record_size_limit),
+        ]
+        if include_alpn:
+            parts.append(",".join(self.alpn))
+        return parts
+
+    @property
+    def family_id(self) -> str:
+        """Identity of the underlying TLS stack, for matching against known presets.
+
+        Excludes ALPN as well as SNI. Two clients on the same stack that differ only
+        in whether they offer h2 still want the same base preset, because the base
+        supplies the header block and the H2 defaults rather than the protocol choice.
+        On iOS this is the difference between Safari and a system agent, and both are
+        Apple's stack.
+        """
+        return hashlib.sha256("|".join(self._identity_parts(False)).encode()).hexdigest()[:12]
+
     @property
     def stable_id(self) -> str:
         """Content address for this fingerprint.
@@ -72,19 +104,9 @@ class ClientHelloInfo:
         the client, and pointedly excludes extension ORDER, so a permuting client
         still lands on one identity.
         """
-        parts = [
-            self.ja3.split(",")[0],                       # version
-            self.ja3.split(",")[1],                       # ciphers, in order
-            "-".join(str(x) for x in sorted(self.extension_order)),
-            self.ja3.split(",")[3],                       # curves
-            self.ja3.split(",")[4],                       # point formats
-            "-".join(str(x) for x in self.signature_algorithms),
-            ",".join(self.alpn),
-            ",".join(self.cert_compression),
-            str(self.key_share_curves),
-            str(self.record_size_limit),
-        ]
-        return hashlib.sha256("|".join(parts).encode()).hexdigest()[:12]
+        return hashlib.sha256(
+            "|".join(self._identity_parts(True)).encode()
+        ).hexdigest()[:12]
 
 
 def parse_client_hello(raw: bytes, sni: str | None = None) -> ClientHelloInfo:
