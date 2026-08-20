@@ -18,17 +18,34 @@ def _addon_path() -> str:
     return str(Path(addon.__file__).resolve())
 
 
-def install(preset: str | None, mode: str | None, config: Path) -> int:
-    try:
-        import yaml
-    except ImportError:
-        print("mitmcloak: PyYAML is required for `install`; mitmproxy ships it.", file=sys.stderr)
-        return 1
+def _yaml():
+    """mitmproxy ships ruamel.yaml, not PyYAML, and reads config.yaml with it."""
+    from ruamel.yaml import YAML
 
+    y = YAML(typ="safe", pure=True)
+    y.default_flow_style = False
+    return y
+
+
+def _load(config: Path) -> dict:
+    if not config.exists():
+        return {}
+    import io
+
+    return _yaml().load(io.StringIO(config.read_text())) or {}
+
+
+def _save(config: Path, data: dict) -> None:
+    import io
+
+    buf = io.StringIO()
+    _yaml().dump(data, buf)
+    config.write_text(buf.getvalue())
+
+
+def install(preset: str | None, mode: str | None, config: Path) -> int:
     config.parent.mkdir(parents=True, exist_ok=True)
-    data = {}
-    if config.exists():
-        data = yaml.safe_load(config.read_text()) or {}
+    data = _load(config)
 
     scripts = list(data.get("scripts") or [])
     path = _addon_path()
@@ -41,7 +58,7 @@ def install(preset: str | None, mode: str | None, config: Path) -> int:
         data["mitmcloak_mode"] = mode
     data.setdefault("connection_strategy", "lazy")
 
-    config.write_text(yaml.safe_dump(data, sort_keys=False))
+    _save(config, data)
     print(f"mitmcloak: wrote {config}")
     print(f"  scripts: {path}")
     print("\nPlain `mitmdump` now loads mitmcloak. No -s flag needed.")
@@ -49,15 +66,10 @@ def install(preset: str | None, mode: str | None, config: Path) -> int:
 
 
 def uninstall(config: Path) -> int:
-    try:
-        import yaml
-    except ImportError:
-        print("mitmcloak: PyYAML is required.", file=sys.stderr)
-        return 1
     if not config.exists():
         print(f"mitmcloak: {config} does not exist, nothing to do")
         return 0
-    data = yaml.safe_load(config.read_text()) or {}
+    data = _load(config)
     path = _addon_path()
     scripts = [s for s in (data.get("scripts") or []) if s != path]
     if scripts:
@@ -66,7 +78,7 @@ def uninstall(config: Path) -> int:
         data.pop("scripts", None)
     for key in ("mitmcloak_preset", "mitmcloak_mode"):
         data.pop(key, None)
-    config.write_text(yaml.safe_dump(data, sort_keys=False))
+    _save(config, data)
     print(f"mitmcloak: removed the addon from {config}")
     return 0
 

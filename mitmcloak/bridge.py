@@ -263,7 +263,7 @@ class Bridge:
             return
 
         decision = self.resolver.decide(
-            flow, self._mode(), self._mirror_preset(flow), self._preset()
+            flow, self._mode(), lambda: self._mirror_preset(flow), self._preset()
         )
         if decision.reason == "mirror" and self._mode() == "mirror" and not decision.preset:
             self._passthrough(flow, "other")

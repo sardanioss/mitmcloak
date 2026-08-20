@@ -83,7 +83,9 @@ class Resolver:
         except Exception:                              # noqa: BLE001
             return False
 
-    def decide(self, flow, mode: str, mirror_preset: str | None, static: str) -> Decision:
+    def decide(self, flow, mode: str, mirror_preset, static: str) -> Decision:
+        """`mirror_preset` is a callable, so a client whose flows always match a rule
+        never pays to have a mirror preset built and registered for it."""
         if self.session_factory is not None:
             try:
                 session = self.session_factory(flow)
@@ -97,8 +99,10 @@ class Resolver:
             if rule.matches(flow):
                 return Decision(preset=rule.preset, reason="rule")
 
-        if mode in ("auto", "mirror") and mirror_preset:
-            return Decision(preset=mirror_preset, reason="mirror")
+        if mode in ("auto", "mirror"):
+            name = mirror_preset()
+            if name:
+                return Decision(preset=name, reason="mirror")
 
         return Decision(preset=static, reason="static")
 
