@@ -11,6 +11,7 @@ against that map. No network, no certificates: we only ever need the first recor
 """
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import threading
@@ -130,6 +131,86 @@ def build_identity_map(candidates=BASE_CANDIDATES) -> dict[str, str]:
         len(identities), len(candidates),
     )
     return identities
+
+
+# A ClientHello unlike any browser preset, used to ask httpcloak whether it really
+# honours raw_client_hello. curl's, because its 30 ciphers and absent GREASE make an
+# accidental match impossible.
+_PROBE_FIXTURE = "curl-8.21-openssl"
+
+
+def probe_fixture() -> tuple[str, str] | None:
+    """The bundled probe hello and the family it must reproduce."""
+    import base64
+    from pathlib import Path
+
+    path = Path(__file__).parent / "data" / "client_hellos.json"
+    try:
+        blob = json.loads(path.read_text())[_PROBE_FIXTURE]["client_hello_b64"]
+    except (OSError, KeyError, ValueError):
+        return None
+    try:
+        family = parse_client_hello(base64.b64decode(blob)).family_id
+    except ValueError:
+        return None
+    return blob, family
+
+
+def supports_raw_client_hello(fixture_b64: str, expected_family: str) -> bool:
+    """Ask httpcloak to replay a known hello and check that it actually did.
+
+    Go's JSON decoder ignores unknown fields, so an httpcloak without C1 accepts a
+    preset carrying raw_client_hello, drops the key, and quietly serves the base
+    preset instead. The registration succeeds, the logs say "mirrored", and the wire
+    carries the wrong fingerprint. Nothing short of looking at the bytes catches it.
+    """
+    import httpcloak
+
+    name = "mitmcloak-capability-probe"
+    spec = {
+        "name": name, "based_on": "chrome-151-windows",
+        "tls": {"raw_client_hello": fixture_b64, "allow_blunt_mimicry": True},
+    }
+    try:
+        httpcloak.load_preset_from_json(json.dumps({"version": 1, "preset": spec}))
+    except Exception as exc:                           # noqa: BLE001
+        if "already registered" not in str(exc):
+            logger.debug("mitmcloak: capability probe could not register: %s", exc)
+            return False
+
+    sink = _HelloSink()
+    session = None
+    try:
+        session = httpcloak.Session(
+            preset=name, verify=False, timeout=3, http_version="h2",
+            without_cookie_jar=True, without_conditional_cache=True,
+            allow_redirects=False,
+        )
+        try:
+            session.get(f"https://127.0.0.1:{sink.port}/", timeout=3)
+        except Exception:                              # noqa: BLE001 - expected
+            pass
+        for raw in sink.captured:
+            try:
+                if parse_client_hello(raw).family_id == expected_family:
+                    return True
+            except ValueError:
+                continue
+        return False
+    except Exception as exc:                           # noqa: BLE001
+        logger.debug("mitmcloak: capability probe failed: %s", exc)
+        return False
+    finally:
+        if session is not None:
+            try:
+                session.close()
+            except Exception:                          # noqa: BLE001
+                pass
+        sink.close()
+        try:
+            httpcloak.unregister_preset(name)
+        except Exception:                              # noqa: BLE001
+            pass
 
 
 class BaseIdentifier:

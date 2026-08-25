@@ -115,3 +115,24 @@ def test_hpack_representations():
     assert reps
     assert all(kind in ("indexed", "incremental", "without", "never")
                for kind, _ in reps)
+
+
+def test_quic_hello_is_recognised(hellos):
+    """A QUIC hello replayed over TCP is a shape no real client produces."""
+    tcp = capture.parse_client_hello(hellos["chrome-151-windows"])
+    assert not tcp.is_quic
+
+    quic = capture.ClientHelloInfo(
+        raw=tcp.raw, ja3=tcp.ja3,
+        extension_order=tuple(list(tcp.extension_order) + [57]),
+        alpn=["h3", "h3-29"],
+    )
+    assert quic.is_quic
+
+
+def test_h3_only_alpn_alone_marks_a_quic_hello(hellos):
+    tcp = capture.parse_client_hello(hellos["chrome-151-windows"])
+    quic = capture.ClientHelloInfo(
+        raw=tcp.raw, ja3=tcp.ja3, extension_order=tcp.extension_order, alpn=["h3"],
+    )
+    assert quic.is_quic

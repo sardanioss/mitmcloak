@@ -31,3 +31,6 @@ Issues = "https://github.com/sardanioss/mitmcloak/issues"
 
 [tool.setuptools]
 packages = ["mitmcloak"]
+
+[tool.setuptools.package-data]
+mitmcloak = ["data/*.json"]

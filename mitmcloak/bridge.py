@@ -21,7 +21,7 @@ from mitmproxy import types as mtypes
 
 from . import capture, headers as hdrs, options as opts_mod
 from .catalogue import Catalogue
-from .identify import BaseIdentifier
+from .identify import BaseIdentifier, probe_fixture, supports_raw_client_hello
 from .mirror import (
     ClientProfile, MirrorRegistry, base_for_user_agent, refine_platform,
 )
@@ -85,6 +85,7 @@ class Bridge:
         self._inflight: set[asyncio.Task] = set()
         self._logged_passthrough: set[str] = set()
         self._preset_names: set | None = None
+        self.mirror_supported: bool | None = None
 
         self.stats = {
             "bridged": 0, "mirrored": 0, "static": 0, "rule": 0, "supplied": 0,
@@ -93,7 +94,7 @@ class Bridge:
             "passthrough_bypass": 0, "passthrough_other": 0,
             "captured_hellos": 0, "captured_h2": 0,
             "base_from_tls": 0, "base_from_user_agent": 0,
-            "observed_only": 0, "tls_refused": 0,
+            "observed_only": 0, "tls_refused": 0, "skipped_quic_hello": 0,
         }
         self._requested: set[str] = set()
         """Client connections that produced at least one request we could act on."""
@@ -152,6 +153,7 @@ class Bridge:
                 "TLS connection before the request hook and leaks a Python ClientHello"
             )
         self._apply_overrides()
+        self._check_mirror_capability()
         upstream = opts_mod.upstream_from_mode(ctx.options)
         if upstream and not ctx.options.mitmcloak_proxy:
             logger.info(
@@ -165,6 +167,35 @@ class Bridge:
         logger.info(
             "mitmcloak: ready (httpcloak %s, preset=%s, mode=%s, headers=%s)",
             httpcloak.version(), self._preset(), self._mode(), self._header_mode(),
+        )
+
+    def _check_mirror_capability(self) -> None:
+        """Refuse to mirror against an httpcloak that cannot replay a captured hello.
+
+        Without the check this degrades in the worst possible direction: registration
+        succeeds, every log line says mirrored, and every request carries the base
+        preset's fingerprint instead of the client's. Measured against httpcloak
+        1.6.11, where a preset built from curl's hello served Chrome's JA4.
+        """
+        if self._mode() == "static":
+            return
+        probe = probe_fixture()
+        if probe is None:
+            logger.warning("mitmcloak: no bundled probe fixture, cannot verify mirroring")
+            return
+        if supports_raw_client_hello(*probe):
+            self.mirror_supported = True
+            return
+        self.mirror_supported = False
+        ctx.options.update(mitmcloak_mode="static")
+        import httpcloak
+
+        logger.error(
+            "mitmcloak: httpcloak %s ignores raw_client_hello, so mirroring would "
+            "silently serve the base preset's fingerprint instead of the client's. "
+            "Mirroring is DISABLED and the mode is now static. Upgrade httpcloak to "
+            "a build that supports captured ClientHellos.",
+            httpcloak.version(),
         )
 
     def _apply_overrides(self) -> None:
@@ -427,6 +458,11 @@ class Bridge:
             return cached
         profile = self._profiles.get(conn_id)
         if profile is None:
+            return None
+        if profile.hello.is_quic and ctx.options.mitmcloak_http_version != "h3":
+            # A QUIC hello carries quic_transport_parameters and h3-only ALPN. Sending
+            # that over TCP is not a mirror, it is a shape no client produces.
+            self.stats["skipped_quic_hello"] += 1
             return None
         # Built here rather than in tls_clienthello because the User-Agent, which is
         # the fallback signal for the base, does not exist until a request arrives.

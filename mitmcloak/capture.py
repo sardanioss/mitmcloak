@@ -83,6 +83,19 @@ class ClientHelloInfo:
         return parts
 
     @property
+    def is_quic(self) -> bool:
+        """Whether this hello came from a QUIC connection rather than TLS over TCP.
+
+        Extension 57 is quic_transport_parameters, which is meaningless on a TCP
+        handshake, and a QUIC client offers only h3 ALPN. Replaying such a hello over
+        TCP produces a request no real client could have made, which is worse than
+        not mirroring at all.
+        """
+        if 57 in self.extension_order:
+            return True
+        return bool(self.alpn) and all(a.startswith("h3") for a in self.alpn)
+
+    @property
     def family_id(self) -> str:
         """Identity of the underlying TLS stack, for matching against known presets.
 
