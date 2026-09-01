@@ -139,6 +139,13 @@ mitmdump --set mitmcloak_preset=chrome-151-windows \
 | `mitmcloak_proxy` | | upstream proxy for the httpcloak leg |
 | `mitmcloak_ja3` / `mitmcloak_akamai` | | one-off fingerprint overrides |
 | `mitmcloak_tcp_ttl` / `_mss` / `_window_size` | | TCP/IP knobs |
+| `mitmcloak_catalogue_dir` | | record every fingerprint seen, used or not |
+| `mitmcloak_identify_by_tls` | `true` | pick a mirrored client's base from its TLS stack, falling back to the User-Agent |
+| `mitmcloak_timeout` | `30` | upstream request timeout, seconds |
+| `mitmcloak_verify` | `true` | verify upstream certificates |
+| `mitmcloak_max_idle` | `300` | seconds before an idle upstream session is swept |
+| `mitmcloak_disable_ech` | `false` | disable Encrypted Client Hello upstream |
+| `mitmcloak_tls_only` | `false` | keep the preset's TLS but not its headers |
 
 ### Per-flow rules use mitmproxy's own filter language
 
