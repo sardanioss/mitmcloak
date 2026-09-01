@@ -7,11 +7,19 @@ import pytest
 
 from mitmcloak import capture
 
-FIXTURES = Path(__file__).resolve().parent.parent / "research" / "fixtures"
+def _fixture_dir() -> Path:
+    """Prefer the copy shipped inside the package, so these run against an installed
+    wheel as well as a checkout."""
+    import mitmcloak
+
+    packaged = Path(mitmcloak.__file__).parent / "data"
+    if (packaged / "client_hellos.json").exists():
+        return packaged
+    return Path(__file__).resolve().parent.parent / "research" / "fixtures"
 
 
 def _hellos():
-    data = json.loads((FIXTURES / "client_hellos.json").read_text())
+    data = json.loads((_fixture_dir() / "client_hellos.json").read_text())
     return {k: base64.b64decode(v["client_hello_b64"])
             for k, v in data.items() if not k.startswith("_")}
 

@@ -9,11 +9,19 @@ from mitmcloak import capture, headers as hdrs, mirror
 from mitmcloak.resolve import parse_rule
 from mitmcloak.sessions import SessionPool
 
-FIXTURES = Path(__file__).resolve().parent.parent / "research" / "fixtures"
+def _fixture_dir() -> Path:
+    """Prefer the copy shipped inside the package, so these run against an installed
+    wheel as well as a checkout."""
+    import mitmcloak
+
+    packaged = Path(mitmcloak.__file__).parent / "data"
+    if (packaged / "client_hellos.json").exists():
+        return packaged
+    return Path(__file__).resolve().parent.parent / "research" / "fixtures"
 
 
 def _chrome():
-    data = json.loads((FIXTURES / "client_hellos.json").read_text())
+    data = json.loads((_fixture_dir() / "client_hellos.json").read_text())
     return base64.b64decode(data["chrome-151-windows"]["client_hello_b64"])
 
 
@@ -282,3 +290,21 @@ def test_explicit_proxy_option_wins_over_upstream_mode():
         mitmcloak_ja3 = ""; mitmcloak_akamai = ""
         mitmcloak_tcp_ttl = 0; mitmcloak_tcp_mss = 0; mitmcloak_tcp_window_size = 0
     assert session_options(O)["proxy"] == "http://explicit:9090"
+
+
+def test_pool_identifies_supplied_sessions_by_identity_not_id():
+    """CPython reuses object ids, so keying on id() could make the pool refuse to
+    close a session it actually owns."""
+    import weakref
+
+    from mitmcloak.sessions import SessionPool
+
+    pool = SessionPool(max_sessions=4)
+    assert isinstance(pool._external, weakref.WeakSet)
+    supplied = _FakeSession()
+    pool.adopt(("a",), supplied)
+    owned = _FakeSession()
+    pool.get(("b",), lambda: owned)
+    pool.close()
+    assert not supplied.closed          # theirs, left alone
+    assert owned.closed                 # ours, closed

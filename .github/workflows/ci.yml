@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # The unit tests touch neither the network nor the cgo library: every httpcloak
+  # import in the package is lazy, so this matrix can cover Python versions that
+  # httpcloak has no wheel for.
+  unit:
+    name: unit / py${{ matrix.python }} / mitmproxy ${{ matrix.mitmproxy }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        mitmproxy: ["latest"]
+        include:
+          # Lowest version the package claims to support, so the claim is tested
+          # rather than asserted.
+          - python: "3.12"
+            mitmproxy: "11.0.0"
+          - python: "3.12"
+            mitmproxy: "12.0.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: install
+        run: |
+          python -m pip install -q --upgrade pip
+          if [ "${{ matrix.mitmproxy }}" = "latest" ]; then
+            python -m pip install -q mitmproxy pytest
+          else
+            python -m pip install -q "mitmproxy==${{ matrix.mitmproxy }}" pytest
+          fi
+          python -m pip install -q --no-deps -e .
+      - name: versions
+        run: python -c "import mitmproxy, sys; from mitmproxy import version; print('py', sys.version.split()[0], 'mitmproxy', version.VERSION)"
+      - name: the addon still loads against this mitmproxy
+        # Catches API drift that the unit tests would miss, such as an option type
+        # or a command return annotation mitmproxy's type system stops accepting.
+        run: |
+          python - <<'PY'
+          from mitmproxy.addons import default_addons
+          from mitmproxy.test import taddons
+          from mitmcloak import Bridge
+          with taddons.context() as tctx:
+              b = Bridge()
+              tctx.master.addons.add(b)
+              assert tctx.options.mitmcloak_preset
+              names = [c for c in tctx.master.commands.commands if c.startswith("mitmcloak")]
+              assert len(names) >= 6, names
+              print("addon loaded, commands:", sorted(names))
+          PY
+      - name: tests
+        run: python -m pytest tests/ -q
+
+  package:
+    name: wheel builds and installs clean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -q --upgrade pip build
+      - run: python -m build --wheel
+      - name: install the wheel into a fresh environment
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install -q --no-deps dist/*.whl
+          /tmp/fresh/bin/pip install -q mitmproxy
+          # The probe fixture must survive packaging, or mirroring cannot be verified
+          # at startup and would silently degrade.
+          /tmp/fresh/bin/python -c "
+          import mitmcloak, mitmcloak.addon
+          from mitmcloak.identify import probe_fixture
+          assert probe_fixture() is not None, 'probe fixture missing from the wheel'
+          print('wheel ok, version', mitmcloak.__version__)
+          "

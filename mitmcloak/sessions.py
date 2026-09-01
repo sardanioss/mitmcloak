@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+import weakref
 from collections import OrderedDict
 from typing import Any, Callable
 
@@ -29,8 +30,13 @@ class SessionPool:
         self.max_sessions = max_sessions
         self.max_idle = max_idle
         self._pool: OrderedDict[tuple, Any] = OrderedDict()
-        self._external: set[int] = set()
-        """Sessions handed to us by a user callable. We use them, we never close them."""
+        self._external: weakref.WeakSet = weakref.WeakSet()
+        """Sessions handed to us by a user callable. We use them, we never close them.
+
+        A WeakSet rather than a set of id(): CPython reuses object ids once an object
+        is collected, so a freed supplied session could hand its id to a session we
+        own, and we would then decline to close it forever.
+        """
         self.created = 0
         self.reused = 0
         self.evicted = 0
@@ -45,7 +51,7 @@ class SessionPool:
         if existing is session:
             self._pool.move_to_end(key)
             return session
-        self._external.add(id(session))
+        self._external.add(session)
         self._pool[key] = session
         self._trim()
         return session
@@ -91,8 +97,8 @@ class SessionPool:
 
     def _close(self, session: Any) -> None:
         # Never close a session the user handed us; they may still be using it.
-        if id(session) in self._external:
-            self._external.discard(id(session))
+        if session in self._external:
+            self._external.discard(session)
             return
         try:
             session.close()
