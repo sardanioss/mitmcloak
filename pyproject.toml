@@ -9,6 +9,7 @@ description = "Give mitmproxy's upstream leg a real browser's TLS and HTTP/2 fin
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["mitmproxy", "tls", "fingerprint", "ja3", "ja4", "http2", "addon", "proxy"]
 classifiers = [
   "Development Status :: 3 - Alpha",
