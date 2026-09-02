@@ -20,7 +20,10 @@ classifiers = [
 ]
 dependencies = [
   "mitmproxy>=11",
-  "httpcloak>=1.6.11",
+  # Mirroring needs tls.raw_client_hello, which landed in 1.7.0. Below it the
+  # startup probe disables mirroring rather than silently serving the base
+  # preset's fingerprint, but the floor belongs in metadata too.
+  "httpcloak>=1.7.0",
 ]
 
 [project.optional-dependencies]

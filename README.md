@@ -246,6 +246,12 @@ and API requests have already gone through.
 **Bodies are buffered**, matching stock mitmproxy, which sets `stream_large_bodies` to
 `None` by default. Requests over `mitmcloak_max_body` are handed back unbridged and counted.
 
+**Header fidelity is capped at `merge` for now.** httpcloak has an exact-headers mode
+that emits an ordered list of pairs verbatim, which is what a mirror wants, but it is only
+on the synchronous request path. mitmcloak uses `request_async` exclusively, because a
+blocking call would stall mitmproxy's event loop for the whole upstream round trip. Once
+`request_async` accepts `exact_headers`, a `headers=exact` mode becomes a small change.
+
 **Memory tracks live sessions, not traffic.** An httpcloak session costs roughly 190 kB,
 and closing one does **not** return that memory to the operating system. Peak usage
 therefore follows the high-water mark of concurrently live sessions, so
