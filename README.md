@@ -6,9 +6,8 @@
 
 <p align="center">
 Your browser behind mitmproxy runs the site's JavaScript and produces genuine telemetry.<br>
-That half was never broken. The telemetry then leaves over a <b>Python TLS handshake</b>.<br>
-<br>
-You did not get caught. Your proxy got caught, holding your session.
+That half was never broken. The telemetry then leaves over a <b>Python TLS handshake</b>,
+and the origin sees a browser that handshakes like a Python script.
 </p>
 
 <p align="center">
@@ -19,7 +18,7 @@ You did not get caught. Your proxy got caught, holding your session.
 
 <br>
 
-## The receipt
+## Results
 
 Headless Chromium fetching the same page, three ways. One line of difference in how
 mitmproxy was started.
@@ -33,13 +32,17 @@ mitmproxy was started.
 
 ```diff
   Akamai HTTP/2
-  Chromium, direct          1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
-- through mitmproxy         1:4096;2:0;4:2147483647;5:131072;8:0;3:100;6:65536|2147418112|0|m,s,p,a
-+ through mitmcloak         1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
+
+  Chromium, direct
+    1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
+- through mitmproxy
+-   1:4096;2:0;4:2147483647;5:131072;8:0;3:100;6:65536|2147418112|0|m,s,p,a
++ through mitmcloak
++   1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
 ```
 
-Matching a snapshot is the easy half. Chromium also reshuffles its TLS extensions on
-every single connection, so its JA3 moves while its JA4 holds still:
+A static match is the easy half. Chromium also reshuffles its TLS extensions on every
+connection, so its JA3 moves while its JA4 holds still:
 
 ```diff
   Four connections, one browser
@@ -93,7 +96,32 @@ byte-identical, not "close enough".
 | Chrome | exact | exact | exact |
 | Firefox | exact | exact | exact |
 
-## Your client can be written in anything
+## HTTP/3
+
+A proxy setting only redirects TCP, so a client speaking QUIC never reaches the proxy at
+all. That is why an app can keep working normally while mitmproxy shows nothing from it.
+
+Two halves, and they are independent.
+
+**Getting QUIC in.** An HTTP proxy cannot carry it. `wireguard` and `transparent` modes
+carry UDP, so QUIC arrives:
+
+```bash
+mitmdump --mode wireguard --set mitmcloak_http_version=h3
+```
+
+Point the device at the WireGuard config mitmproxy prints on startup, and its QUIC
+traffic comes to the proxy along with everything else.
+
+**Going out over HTTP/3.** `mitmcloak_http_version=h3` makes the upstream leg negotiate
+QUIC rather than TCP. Measured against `cloudflare-quic.com`, the response comes back
+`protocol=h3`.
+
+A captured QUIC ClientHello is only replayed when the upstream is `h3`. Otherwise it is
+skipped and counted as `skipped_quic_hello`: a hello carrying `quic_transport_parameters`
+and h3-only ALPN, sent over TCP, is a shape no client produces.
+
+## Any client, any language
 
 It is a proxy, so what sits in front of it is unconstrained. A Go or Rust service gets
 Chrome's TLS and HTTP/2 fingerprints by setting one environment variable and integrating
@@ -197,7 +225,7 @@ Set the phone up once, export, then run from anywhere.
 </details>
 
 <details>
-<summary><b>Configuration, and the four tiers of control</b></summary>
+<summary><b>Configuration and the four tiers of control</b></summary>
 <br>
 
 Every option works from the command line and from mitmweb's option editor, where the ones
@@ -387,7 +415,7 @@ An explicit `--set mitmcloak_proxy=` wins if you set both.
 </details>
 
 <details>
-<summary><b>Before you rely on it: every limitation, measured</b></summary>
+<summary><b>Limitations, and what is not covered</b></summary>
 <br>
 
 **Flows mitmproxy does not decrypt are not bridged.** `--ignore-hosts`, TLS passthrough
