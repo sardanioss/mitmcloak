@@ -24,9 +24,19 @@ REQUIRED_FLAGS = {
 
 
 class SessionPool:
-    """LRU pool with an idle sweep, keyed by whatever the resolver decides."""
+    """LRU pool with an idle sweep, keyed by whatever the resolver decides.
 
-    def __init__(self, max_sessions: int = 256, max_idle: float = 300.0) -> None:
+    The cap is a memory ceiling. MEASURED: an httpcloak session costs about 190 kB, and
+    closing one returns nothing to the OS, so peak usage follows the high-water mark of
+    concurrently live sessions rather than the number of requests served. Sizing this is
+    the main lever an operator has.
+
+    A workload whose distinct origins exceed the cap and cycles through them in order is
+    the pathological case for LRU and will show a 0% hit rate. `reused` staying at zero
+    while `created` climbs is the signal for that.
+    """
+
+    def __init__(self, max_sessions: int = 96, max_idle: float = 120.0) -> None:
         self.max_sessions = max_sessions
         self.max_idle = max_idle
         self._pool: OrderedDict[tuple, Any] = OrderedDict()

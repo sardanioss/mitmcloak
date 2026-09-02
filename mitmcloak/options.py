@@ -80,8 +80,18 @@ def register(loader) -> None:
         "built-in presets, falling back to the User-Agent. Apps and system agents "
         "rarely carry a platform token in their User-Agent.",
     )
-    loader.add_option("mitmcloak_max_sessions", int, 256, "Session pool cap.")
-    loader.add_option("mitmcloak_max_idle", int, 300, "Seconds before an idle session is swept.")
+    loader.add_option(
+        "mitmcloak_max_sessions", int, 96,
+        "Session pool cap. This is a memory dial as much as a reuse dial: an httpcloak "
+        "session costs roughly 190 kB and closing one does not return that memory to "
+        "the OS, so peak usage tracks the high-water mark of live sessions rather than "
+        "the request count.",
+    )
+    loader.add_option(
+        "mitmcloak_max_idle", int, 120,
+        "Seconds before an idle session is closed. Frees sockets and file descriptors; "
+        "it does not reduce memory, since closing a session returns nothing to the OS.",
+    )
     loader.add_option(
         "mitmcloak_max_body", int, 50 * 1024 * 1024,
         "Requests with a body over this are handed back to mitmproxy unbridged.",

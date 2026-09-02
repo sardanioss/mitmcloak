@@ -134,7 +134,7 @@ mitmdump --set mitmcloak_preset=chrome-151-windows \
 | `mitmcloak_session_scope` | `origin` | `origin`, `client` or `connection`, see below |
 | `mitmcloak_export_dir` | | write every mirrored preset here |
 | `mitmcloak_http_version` | `auto` | `auto`, `h1`, `h2`, `h3` |
-| `mitmcloak_max_sessions` | `256` | upstream session pool cap |
+| `mitmcloak_max_sessions` | `96` | upstream session pool cap, and the main memory dial (see below) |
 | `mitmcloak_max_body` | `50 MB` | larger requests are handed back to mitmproxy |
 | `mitmcloak_proxy` | | upstream proxy for the httpcloak leg |
 | `mitmcloak_ja3` / `mitmcloak_akamai` | | one-off fingerprint overrides |
@@ -245,6 +245,23 @@ and API requests have already gone through.
 
 **Bodies are buffered**, matching stock mitmproxy, which sets `stream_large_bodies` to
 `None` by default. Requests over `mitmcloak_max_body` are handed back unbridged and counted.
+
+**Memory tracks live sessions, not traffic.** An httpcloak session costs roughly 190 kB,
+and closing one does **not** return that memory to the operating system. Peak usage
+therefore follows the high-water mark of concurrently live sessions, so
+`mitmcloak_max_sessions` is a memory ceiling as much as a reuse setting:
+
+```
+peak ~= baseline + 128 kB x distinct hosts (mitmproxy's own cost)
+                 + 190 kB x mitmcloak_max_sessions
+```
+
+Measured, not estimated. It is bounded: serving more requests does not raise it once the
+pool is full. Raise the cap for better reuse on many-origin workloads, lower it if memory
+matters more. The idle sweep frees sockets and file descriptors but recovers no memory.
+
+If you see `the session pool has a 0% hit rate` in the log, more origins are in play than
+the cap allows and every request is building a fresh upstream session.
 
 **The TCP/IP layer is still the host's.** A mirrored iPhone has a Linux stack underneath
 it. `mitmcloak_tcp_*` exposes what httpcloak can set; window scale is a kernel limit.

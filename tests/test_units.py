@@ -308,3 +308,27 @@ def test_pool_identifies_supplied_sessions_by_identity_not_id():
     pool.close()
     assert not supplied.closed          # theirs, left alone
     assert owned.closed                 # ours, closed
+
+
+def test_pool_defaults_bound_memory():
+    """The cap is a memory ceiling: ~190 kB per live session, and closing returns
+    nothing to the OS, so the default must be a deliberate number."""
+    from mitmcloak.sessions import SessionPool
+
+    pool = SessionPool()
+    assert pool.max_sessions == 96
+    assert pool.max_idle == 120.0
+
+
+def test_zero_hit_rate_is_detectable():
+    """A pool whose origins exceed its cap and rotate never hits, which makes it an
+    allocation treadmill rather than a cache. `reused == 0` while `created` climbs is
+    the signal the addon warns on."""
+    from mitmcloak.sessions import SessionPool
+
+    pool = SessionPool(max_sessions=4)
+    for i in range(40):                       # 10 origins rotating, cap 4
+        pool.get((f"h{i % 10}",), _FakeSession)
+    assert pool.reused == 0
+    assert pool.created == 40
+    assert pool.evicted == 36

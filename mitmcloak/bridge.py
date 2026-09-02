@@ -86,6 +86,8 @@ class Bridge:
         self._logged_passthrough: set[str] = set()
         self._preset_names: set | None = None
         self.mirror_supported: bool | None = None
+        self._debug_mem = bool(os.environ.get("MITMCLOAK_DEBUG_MEM"))
+        self._debug_every = int(os.environ.get("MITMCLOAK_DEBUG_MEM") or 0) or 100
 
         self.stats = {
             "bridged": 0, "mirrored": 0, "static": 0, "rule": 0, "supplied": 0,
@@ -213,10 +215,25 @@ class Bridge:
                 ctx.options.update(**{name: value})
 
     async def _sweep_loop(self) -> None:
+        warned = False
         try:
             while True:
                 await asyncio.sleep(SWEEP_INTERVAL)
                 self.pool.sweep()
+                # A pool that never hits is not a cache, it is an allocation treadmill.
+                # It happens when the number of live origins exceeds the cap and they
+                # are visited in rotation, which is the worst case for LRU.
+                if (not warned and self.pool.created >= 200
+                        and self.pool.reused == 0):
+                    warned = True
+                    logger.warning(
+                        "mitmcloak: the session pool has a 0%% hit rate after %d "
+                        "sessions. More origins are in play than mitmcloak_max_sessions "
+                        "(%d) allows, so every request builds a new upstream session. "
+                        "Raising the cap trades memory for reuse: roughly 190 kB per "
+                        "live session, and closing one returns nothing to the OS.",
+                        self.pool.created, ctx.options.mitmcloak_max_sessions,
+                    )
         except asyncio.CancelledError:
             pass
 
@@ -237,8 +254,19 @@ class Bridge:
 
     def summary(self) -> str:
         parts = [f"{k}={v}" for k, v in self.stats.items() if v]
-        parts.append(f"sessions={len(self.pool)}")
-        parts.append(f"presets={len(self.mirror.names())}")
+        # Pool and registry behaviour, not just request outcomes. Without these there
+        # is no way to tell a healthy pool from one that never evicts, which is the
+        # difference between steady memory and unbounded growth.
+        parts += [
+            f"sessions={len(self.pool)}",
+            f"pool_created={self.pool.created}",
+            f"pool_reused={self.pool.reused}",
+            f"pool_evicted={self.pool.evicted}",
+            f"pool_swept={self.pool.swept}",
+            f"presets={len(self.mirror.names())}",
+            f"catalogued={len(self.catalogue.entries)}",
+            f"live_profiles={len(self._profiles)}",
+        ]
         return "stats " + " ".join(parts)
 
     # ------------------------------------------------------- the no-upstream proof
@@ -438,6 +466,9 @@ class Bridge:
             "ms": round((time.perf_counter() - started) * 1000, 1),
         }
         self.stats["bridged"] += 1
+        if self._debug_mem and self.stats["bridged"] % self._debug_every == 0:
+            for row in self.cmd_debug_memory():
+                logger.warning("[mem] %s", row)
 
     # ------------------------------------------------------------------ helpers
 
@@ -622,6 +653,53 @@ class Bridge:
         finally:
             self.catalogue.directory = previous
         return f"wrote {written} fingerprint(s) to {directory}"
+
+    @command.command("mitmcloak.debug.memory")
+    def cmd_debug_memory(self) -> Sequence[str]:
+        """Where Python memory is going, and how much of RSS it accounts for.
+
+        Growth that tracemalloc cannot see is outside the Python heap, which for this
+        addon means the Go side of httpcloak. Distinguishing the two is the first
+        question worth answering about any growth here, and guessing at it is slow.
+        """
+        import gc
+        import tracemalloc
+
+        rows: list[str] = []
+        try:
+            rss = 0
+            with open("/proc/self/status") as fh:
+                for line in fh:
+                    if line.startswith("VmRSS"):
+                        rss = int(line.split()[1])
+                        break
+            rows.append(f"rss={rss} kB  gc_objects={len(gc.get_objects())}")
+            rows.append(
+                f"pool_created={self.pool.created} pool_reused={self.pool.reused} "
+                f"pool_evicted={self.pool.evicted} pool_swept={self.pool.swept} "
+                f"mirror_registered={self.mirror.registered} mirror_reused={self.mirror.reused}"
+            )
+            rows.append(
+                f"live_profiles={len(self._profiles)} "
+                f"presets_for_conn={len(self._presets_for_conn)} "
+                f"sessions={len(self.pool)} catalogue={len(self.catalogue.entries)} "
+                f"inflight={len(self._inflight)} requested={len(self._requested)}"
+            )
+            if not tracemalloc.is_tracing():
+                tracemalloc.start(10)
+                rows.append("tracemalloc started; call again after some traffic to see growth")
+                return rows
+            current, peak = tracemalloc.get_traced_memory()
+            rows.append(f"python_traced={current // 1024} kB  peak={peak // 1024} kB")
+            rows.append(
+                f"untraced={(rss - current // 1024)} kB  "
+                "<- growth here is outside the Python heap, i.e. the Go side"
+            )
+            for stat in tracemalloc.take_snapshot().statistics("lineno")[:8]:
+                rows.append(f"  {stat.size // 1024:6d} kB  {stat.count:6d} objs  {stat.traceback[0]}")
+        except Exception as exc:                       # noqa: BLE001
+            rows.append(f"memory probe failed: {exc}")
+        return rows
 
     @command.command("mitmcloak.stats")
     def cmd_stats(self) -> str:
