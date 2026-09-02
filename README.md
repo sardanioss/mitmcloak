@@ -100,25 +100,34 @@ byte-identical, not "close enough".
 
 A proxy setting only redirects TCP, so a client speaking QUIC never reaches the proxy at
 all. That is why an app can keep working normally while mitmproxy shows nothing from it.
-
-Two halves, and they are independent.
-
-**Getting QUIC in.** An HTTP proxy cannot carry it. `wireguard` and `transparent` modes
-carry UDP, so QUIC arrives:
+Getting QUIC in is a mitmproxy mode question; once it is in, mitmcloak bridges it.
 
 ```bash
-mitmdump --mode wireguard --set mitmcloak_http_version=h3
+mitmdump --mode wireguard --set mitmcloak_http_version=h3      # a device, over the tunnel
+mitmdump --mode reverse:http3://example.com --set mitmcloak_http_version=h3
 ```
 
-Point the device at the WireGuard config mitmproxy prints on startup, and its QUIC
-traffic comes to the proxy along with everything else.
+`wireguard` and `transparent` carry UDP, so QUIC from a device arrives. `mitmcloak_http_version=h3`
+makes the upstream leg negotiate QUIC rather than TCP.
 
-**Going out over HTTP/3.** `mitmcloak_http_version=h3` makes the upstream leg negotiate
-QUIC rather than TCP. Measured against `cloudflare-quic.com`, the response comes back
-`protocol=h3`.
+Verified with curl over HTTP/3 through `reverse:http3://`: the response comes back
+`ver=3`, the counters read `bridged=1 mirrored=1`, and the minted preset carries the
+client's real QUIC hello rather than a TCP one:
 
-A captured QUIC ClientHello is only replayed when the upstream is `h3`. Otherwise it is
-skipped and counted as `skipped_quic_hello`: a hello carrying `quic_transport_parameters`
+```text
+is_quic=True   alpn=['h3', 'h3-29']   quic_transport_parameters=present   ciphers=3
+```
+
+That preset needs `allow_blunt_mimicry`, because `quic_transport_parameters` is an
+extension httpcloak has no model for and it goes on the wire verbatim instead.
+
+**Use `http3://`, not `quic://`.** They are different mitmproxy schemes. `quic://` is a
+raw QUIC tunnel with no HTTP parsing, so no request hook fires, nothing is bridged, and
+the leg leaves with mitmproxy's own fingerprint. The counters say so plainly: `quic://`
+gives `captured_hellos=1` and no `bridged`, where `http3://` gives `bridged=1 mirrored=1`.
+
+A captured QUIC hello is only replayed when the upstream is `h3`. Otherwise it is skipped
+and counted as `skipped_quic_hello`, because a hello carrying `quic_transport_parameters`
 and h3-only ALPN, sent over TCP, is a shape no client produces.
 
 ## Any client, any language
