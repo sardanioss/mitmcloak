@@ -57,9 +57,28 @@ def test_firefox_hello(hellos):
     assert info.key_share_curves >= 1
 
 
+# Fixtures that are the same client seen twice, or a preset and the browser it
+# models. They must collapse onto one identity, so they are excluded from the
+# all-different check below and asserted on directly instead.
+SAME_CLIENT = {
+    "chrome-151-windows",
+    "chromium-150-boringssl",
+    "chromium-150-boringssl-second-connection",
+}
+
+
 def test_stable_id_differs_per_client(hellos):
-    ids = {name: capture.parse_client_hello(raw).stable_id for name, raw in hellos.items()}
+    ids = {name: capture.parse_client_hello(raw).stable_id
+           for name, raw in hellos.items() if name not in SAME_CLIENT}
     assert len(set(ids.values())) == len(ids)
+
+
+def test_one_client_keeps_one_identity_across_stacks_that_permute(hellos):
+    """Two consecutive real Chromium connections send different extension orders. If
+    that produced two identities it would mint a preset per connection, and the
+    httpcloak preset modelling that browser has to land on the same one."""
+    ids = {capture.parse_client_hello(hellos[n]).stable_id for n in SAME_CLIENT}
+    assert len(ids) == 1
 
 
 def test_stable_id_ignores_extension_order(hellos):

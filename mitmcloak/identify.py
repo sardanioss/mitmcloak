@@ -86,16 +86,27 @@ class _HelloSink:
             pass
 
 
-def build_identity_map(candidates=BASE_CANDIDATES) -> dict[str, str]:
-    """Map each candidate preset's TLS identity to its name.
+def build_identity_map(
+    candidates=BASE_CANDIDATES,
+) -> tuple[dict[str, str], dict[str, bool]]:
+    """Learn what each candidate preset puts on the wire.
 
-    Returns {stable_id: preset_name}. Presets that share a ClientHello collapse onto
-    one entry; first name wins, and the candidate order above decides which that is.
+    Returns ({stable_id: preset_name}, {preset_name: permutes}). Presets that share a
+    ClientHello collapse onto one identity entry; first name wins, and the candidate
+    order above decides which that is. The permutation map is keyed by preset name, so
+    every candidate keeps its own answer even when its identity collapsed.
+
+    Each candidate is asked for two connections rather than one, because that is what
+    it takes to see whether it reorders its extensions. Chromium does on every
+    connection and Apple's stack, NSS and Go do not, but hardcoding that would be a
+    table to maintain; asking the preset costs one extra local socket and cannot go
+    stale when httpcloak adds a client.
     """
     import httpcloak
 
     sink = _HelloSink()
     identities: dict[str, str] = {}
+    permutes: dict[str, bool] = {}
     try:
         for name in candidates:
             before = len(sink.captured)
@@ -106,10 +117,11 @@ def build_identity_map(candidates=BASE_CANDIDATES) -> dict[str, str]:
                     without_cookie_jar=True, without_conditional_cache=True,
                     allow_redirects=False,
                 )
-                try:
-                    session.get(f"https://127.0.0.1:{sink.port}/", timeout=3)
-                except Exception:                      # noqa: BLE001 - expected
-                    pass
+                for _ in range(2):
+                    try:
+                        session.get(f"https://127.0.0.1:{sink.port}/", timeout=3)
+                    except Exception:                  # noqa: BLE001 - expected
+                        pass
             except Exception as exc:                   # noqa: BLE001
                 logger.debug("mitmcloak: could not probe %s: %s", name, exc)
                 continue
@@ -119,18 +131,24 @@ def build_identity_map(candidates=BASE_CANDIDATES) -> dict[str, str]:
                         session.close()
                     except Exception:                  # noqa: BLE001
                         pass
+            orders = set()
             for raw in sink.captured[before:]:
                 try:
-                    identities.setdefault(parse_client_hello(raw).family_id, name)
+                    info = parse_client_hello(raw)
                 except ValueError:
                     continue
+                identities.setdefault(info.family_id, name)
+                orders.add(info.extension_order)
+            if len(sink.captured[before:]) > 1:
+                permutes[name] = len(orders) > 1
     finally:
         sink.close()
     logger.info(
-        "mitmcloak: learned %d distinct TLS identities from %d base presets",
-        len(identities), len(candidates),
+        "mitmcloak: learned %d distinct TLS identities from %d base presets, "
+        "%d of which reorder their extensions per connection",
+        len(identities), len(candidates), sum(permutes.values()),
     )
-    return identities
+    return identities, permutes
 
 
 # A ClientHello unlike any browser preset, used to ask httpcloak whether it really
@@ -218,16 +236,18 @@ class BaseIdentifier:
 
     def __init__(self) -> None:
         self._identities: dict[str, str] | None = None
+        self._permutes: dict[str, bool] = {}
         self.matched = 0
         self.by_user_agent = 0
 
     def ensure_loaded(self) -> None:
         if self._identities is None:
             try:
-                self._identities = build_identity_map()
+                self._identities, self._permutes = build_identity_map()
             except Exception as exc:                   # noqa: BLE001
                 logger.warning("mitmcloak: TLS identity probing failed: %s", exc)
                 self._identities = {}
+                self._permutes = {}
 
     def match(self, family_id: str) -> str | None:
         self.ensure_loaded()
@@ -235,6 +255,24 @@ class BaseIdentifier:
         if name is not None:
             self.matched += 1
         return name
+
+    def permutes(self, base: str) -> bool:
+        """Whether the chosen base was measured reordering its extensions.
+
+        The User-Agent can move a match onto a sibling variant that was never probed
+        (chrome-150-windows -> chrome-150-android), so an unprobed name falls back to
+        its family: the platform suffix does not change the TLS stack. An unknown
+        family answers False and the client's own repeat connections settle it.
+        """
+        self.ensure_loaded()
+        if base in self._permutes:
+            return self._permutes[base]
+        head = base.rpartition("-")[0]
+        if head:
+            for name, value in self._permutes.items():
+                if name.rpartition("-")[0] == head:
+                    return value
+        return False
 
     def known(self) -> dict[str, str]:
         self.ensure_loaded()

@@ -513,7 +513,9 @@ class Bridge:
         else:
             base = refine_platform(base, user_agent, self._known_presets())
         self.stats["base_from_tls" if base_from_tls else "base_from_user_agent"] += 1
-        name = self.mirror.ensure(profile, base)
+        name = self.mirror.ensure(
+            profile, base, base_permutes=self.identifier.permutes(base)
+        )
         if name is not None:
             self._presets_for_conn[conn_id] = name
             self._export(name)

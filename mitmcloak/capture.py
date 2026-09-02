@@ -47,6 +47,13 @@ class ClientHelloInfo:
     extension_order: tuple[int, ...]
     """Extension types in wire order, GREASE stripped. Used to detect permutation."""
 
+    ciphers: tuple[int, ...] = ()
+    """Cipher suites in wire order, GREASE included, exactly as offered.
+
+    Kept whole rather than filtered because the offer is replayed verbatim: what
+    matters later is which of these the far end could actually select.
+    """
+
     signature_algorithms: list[int] = field(default_factory=list)
     alpn: list[str] = field(default_factory=list)
     cert_compression: list[str] = field(default_factory=list)
@@ -177,6 +184,7 @@ def parse_client_hello(raw: bytes, sni: str | None = None) -> ClientHelloInfo:
         raw=raw,
         ja3=ja3,
         extension_order=tuple(ext_order),
+        ciphers=tuple(ciphers),
         has_grease=grease_seen,
         has_psk=41 in ext_order,
         sni=sni,
