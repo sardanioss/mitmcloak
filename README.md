@@ -13,7 +13,6 @@ and the origin sees a browser that handshakes like a Python script.
 <p align="center">
   <a href="https://pypi.org/project/mitmcloak/"><img src="https://img.shields.io/pypi/v/mitmcloak?color=2b7489&label=pypi" alt="PyPI"></a>
   <a href="https://pypi.org/project/mitmcloak/"><img src="https://img.shields.io/pypi/pyversions/mitmcloak" alt="Python"></a>
-  <a href="https://github.com/sardanioss/mitmcloak/actions"><img src="https://github.com/sardanioss/mitmcloak/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 <br>
