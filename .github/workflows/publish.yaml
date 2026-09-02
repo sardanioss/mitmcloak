@@ -3,7 +3,10 @@
 # No token lives anywhere. PyPI verifies the job over OIDC through Trusted Publishing,
 # configured once at https://pypi.org/manage/account/publishing/ with:
 #   project: mitmcloak   owner: sardanioss   repo: mitmcloak
-#   workflow: publish.yml   environment: pypi
+#   workflow: publish.yaml   environment: pypi
+#
+# The extension matters: PyPI matches the workflow file by name, so publish.yaml and
+# publish.yml are different publishers and one of them will not be found.
 #
 # One job on purpose. Splitting build from publish means handing the distributions
 # between them through upload-artifact/download-artifact, and those two have to be kept
