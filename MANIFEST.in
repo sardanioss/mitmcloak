@@ -1,0 +1,8 @@
+# The sdist is the library, not the workshop. Tests, research notes, captured
+# fingerprints and the CI definition all live in the repository and none of them
+# belong in what someone installs.
+prune tests
+prune research
+prune captures
+prune .github
+exclude .gitignore
