@@ -108,28 +108,18 @@ mitmdump --mode wireguard --set mitmcloak_http_version=h3
 mitmdump --mode reverse:http3://example.com --set mitmcloak_http_version=h3
 ```
 
-The request is bridged: the QUIC hello is captured, a preset is minted from it, and the
-upstream leg goes out over HTTP/3 (`bridged=1 mirrored=1`, response `ver=3`).
-
-**The h3 leg is not yet mirrored on the wire.** httpcloak resolves a preset's captured
-hello in its HTTP/1.1 and HTTP/2 transports only; the QUIC transport never consults it.
-Measured against `tls3.peet.ws` over h3, with curl as the client:
+The QUIC hello is captured, a preset is minted from it, and the upstream leg goes out
+over HTTP/3. Measured against `tls3.peet.ws` with curl as the client:
 
 ```text
-curl, direct              q13d313_55b375c5d22e_19cb63ff0383   13 extensions
-through mitmcloak         q13d37_55b375c5d22e_4ca1098a2eeb     7 extensions
+curl, direct        q13d313_55b375c5d22e_19cb63ff0383   13 extensions
+through mitmcloak   q13d313_55b375c5d22e_19cb63ff0383   13 extensions
 ```
 
-Six extensions are missing rather than reordered: `compress_certificate`,
-`ec_point_formats`, `encrypt_then_mac`, `extended_master_secret`, `post_handshake_auth`
-and `psk_key_exchange_modes`. The cipher hash agrees because every QUIC client offers the
-same three TLS 1.3 suites, so that half proves nothing. JA3 is also frozen across
-connections where a real client rotates.
-
-So h3 today gives you interception and an HTTP/3 upstream, not the client's fingerprint.
-mitmcloak logs a warning when you turn it on rather than reporting a mirror it cannot
-deliver. Use TCP where the fingerprint is what matters, until httpcloak wires the raw
-hello into its QUIC transport.
+Byte-identical, over four connections, `bridged=4 mirrored=4`. This needs httpcloak
+1.7.2: before it the QUIC transport resolved only a named ClientHelloID, so a captured
+hello never reached the wire and the h3 leg went out with seven extensions instead of
+thirteen.
 
 **Use `http3://`, not `quic://`.** They are different mitmproxy schemes. `quic://` is a
 raw QUIC tunnel with no HTTP parsing, so no request hook fires and nothing is bridged at

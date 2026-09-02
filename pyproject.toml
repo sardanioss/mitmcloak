@@ -20,11 +20,11 @@ classifiers = [
 ]
 dependencies = [
   "mitmproxy>=11",
-  # Mirroring needs tls.raw_client_hello (1.7.0). 1.7.1 adds three things nothing else
-  # can supply: exact_headers on the async path, per-request header order, and response
-  # trailers. It also permutes a captured hello per handshake rather than per seed,
-  # which is what makes a mirrored browser's JA3 rotate the way the real one does.
-  "httpcloak>=1.7.1",
+  # 1.7.0 brought raw_client_hello, without which there is no mirror at all. 1.7.1 added
+  # exact_headers on the async path, per-request header order and response trailers.
+  # 1.7.2 is what makes HTTP/3 a mirror rather than interception: before it, the QUIC
+  # transport resolved only a ClientHelloID, so a captured hello never reached the wire.
+  "httpcloak>=1.7.2",
 ]
 
 [project.optional-dependencies]
