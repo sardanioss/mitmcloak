@@ -8,15 +8,41 @@ a contradiction anyone can spot.
 mitmcloak replaces mitmproxy's upstream leg with [httpcloak](https://github.com/sardanioss/httpcloak),
 so the bytes on the wire match the client that actually made the request.
 
+Headless Chromium fetching `https://tls.peet.ws/api/all`, three ways:
+
 ```
-                        JA4                                   Akamai HTTP/2
-plain mitmproxy   t13d2812h1_a01be8c064b6_0d46a1bf4a7c   (none)
-with mitmcloak    t13d3013h2_1d37bd780c83_8537cf56674e   3:100;4:65536;2:0|1048510465|0|m,s,a,p
-the real client   t13d3013h2_1d37bd780c83_8537cf56674e   3:100;4:65536;2:0|1048510465|0|m,s,a,p
+                    JA4                                     Akamai HTTP/2
+Chromium direct     t13d1516h2_8daaf6152771_806a8c22fdea    1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
+via plain mitmproxy t13d2812h2_a01be8c064b6_0d46a1bf4a7c    1:4096;2:0;4:2147483647;5:131072;8:0;3:100;6:65536|2147418112|0|m,s,p,a
+via mitmcloak       t13d1516h2_8daaf6152771_806a8c22fdea    1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
 ```
+
+Same browser, same page, one line of difference in how mitmproxy was started. The
+`peetprint` hash matches too. Through Cloudflare's own reflector
+(`workers.cloudflare.com/cf.json`) the negotiated cipher and the HTTP/2 priority signal
+match the direct browser as well, where plain mitmproxy's do not.
 
 It does not defeat challenges. It stops the proxy corrupting a session that was already
 legitimate.
+
+## It is a proxy, so the client can be written in anything
+
+mitmcloak is a mitmproxy addon and mitmproxy is Python, so configuring it is Python — but
+[tiers 0 and 1](#configuration) are pure config and most users never write any. What sits
+in front of it is unconstrained: anything that can speak through an HTTP proxy gets the
+fingerprint, with no library and no code change.
+
+```
+Go      http.Transport{Proxy: ...}      Rust  reqwest .proxy()
+Java    -Dhttp.proxyHost                Node  HTTPS_PROXY=...
+curl / PHP / Ruby / C# / a browser / a phone / an app
+```
+
+That is wider than httpcloak's own reach, which is Python, Node, .NET and the C library.
+A Go or Rust service gets Chrome's TLS and HTTP/2 fingerprints by setting one
+environment variable. Two limits are the proxy's rather than mitmcloak's: a client
+speaking QUIC/HTTP3 bypasses an HTTP proxy entirely, and a client that pins certificates
+will not trust the CA.
 
 ## Install
 
@@ -231,6 +257,17 @@ none of them is detection:
   only redirects TCP, so that traffic never reaches the proxy at all.
 - **Apps that ignore the proxy setting.** WhatsApp runs its own transport on port 443
   rather than standard TLS.
+
+**A mirrored Chromium's JA3 is stable per origin, where a real one changes per
+connection.** Chromium reorders its TLS extensions on every connection, so its JA3 hash
+differs each time while its JA4 stays constant. mitmcloak asks httpcloak to reproduce
+that, and httpcloak reseeds the shuffle once per session rather than once per connection,
+so a pooled session gives one origin one order. Measured with four connections to the
+same reflector: the browser direct produced four JA3 hashes and one JA4, through
+mitmcloak one JA3 and the same JA4. `--set mitmcloak_session_scope=connection` restores
+the rotation today, at the cost of connection reuse and TLS resumption. Everything JA4,
+JA3N and the Akamai HTTP/2 string measure is unaffected either way, since all three
+normalise ordering.
 
 All three fail at or before the handshake, which is earlier than mitmcloak acts. Plain
 mitmproxy behaves identically.
