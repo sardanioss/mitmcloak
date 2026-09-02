@@ -54,13 +54,12 @@ It reproduces the behaviour, not one sample of it.
 
 ## How
 
-```
-    client                    mitmproxy + mitmcloak                      origin
-┌───────────┐        ┌──────────────────────────────────────┐        ┌────────────┐
-│  browser  │        │  read              mint a preset     │        │  sees the  │
-│  phone    │ ─────▶ │  ClientHello  ──▶  at runtime and    │ ─────▶ │  client's  │
-│  app      │        │  and H2 preface    serve through it  │        │  own TLS   │
-└───────────┘        └──────────────────────────────────────┘        └────────────┘
+```text
+client  ──▶  mitmproxy + mitmcloak  ──▶  origin
+
+             1.  read the client's ClientHello and HTTP/2 preface
+             2.  mint an httpcloak preset from them, at runtime
+             3.  serve that same request through it
 ```
 
 No capture phase and no guessing: the client's real handshake is read on the way in and
@@ -243,7 +242,7 @@ order, casing and repeated names all survive, and httpcloak adds nothing of its 
 Measured through the proxy, the same curl request with `Cookie: a=1`, `X-ODD-CASE: 1`,
 `Cookie: b=2`:
 
-```
+```text
 merge   Host, Connection, sec-ch-ua-platform, User-Agent, sec-ch-ua, sec-ch-ua-mobile,
         Accept, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, Accept-Encoding,
         Accept-Language, Cookie, X-Odd-Case
@@ -319,7 +318,7 @@ mitmcloak does nothing to hide that.
 
 Available in the mitmproxy TUI and mitmweb, with tab completion:
 
-```
+```text
 mitmcloak.presets                 every preset, built in and mirrored
 mitmcloak.preset <name>           switch the static preset
 mitmcloak.preset.load <path>      load a JSON preset file
@@ -353,7 +352,7 @@ against a local TLS origin that parses the ClientHello it receives and reports i
 identity, so the check is that the client's own fingerprint arrives, not merely that a
 200 comes back:
 
-```
+```text
                                     origin saw
 curl straight to the origin         stable_id=c48b918794d3  30 ciphers
 curl through plain mitmproxy        stable_id=da93061cb016  28 ciphers
@@ -371,7 +370,7 @@ loads an eBPF program, and root inside a user namespace is not enough because `s
 itself rejects the mapped uid. Untested here for that reason. Worth knowing how it fails
 if you do not have passwordless sudo, because it fails in the good direction:
 
-```
+```text
 [..] Failed to elevate privileges
 Error logged during startup, exiting...
 ```
@@ -422,7 +421,7 @@ between six and thirty-two, always behind the AES-GCM, ChaCha20 and TLS 1.3 suit
 the same hello, so an origin would have to prefer one of them over TLS 1.3 to trip it.
 Registration names them when it happens:
 
-```
+```text
 WARNING mitmcloak: mc-c14fc534d4ff offers 15 cipher(s) httpcloak cannot complete if the
 server selects one: 0x009f 0xccaa 0x00a3 ... They are still offered, so the fingerprint
 matches; only an origin that prefers one of them will fail.
@@ -457,7 +456,7 @@ and closing one does **not** return that memory to the operating system. Peak us
 therefore follows the high-water mark of concurrently live sessions, so
 `mitmcloak_max_sessions` is a memory ceiling as much as a reuse setting:
 
-```
+```text
 peak ~= baseline + 128 kB x distinct hosts (mitmproxy's own cost)
                  + 190 kB x mitmcloak_max_sessions
 ```
