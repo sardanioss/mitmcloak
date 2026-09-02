@@ -258,6 +258,25 @@ none of them is detection:
 - **Apps that ignore the proxy setting.** WhatsApp runs its own transport on port 443
   rather than standard TLS.
 
+**A few clients offer cipher suites httpcloak could not complete.** The offer itself is
+always copied exactly, so the fingerprint is unaffected; the question is only what
+happens if the origin *selects* one of them, in which case the handshake fails after a
+correct hello. Four families are missing, all dropped from the Go stack deliberately:
+DHE, CCM, ARIA/Camellia and the CBC-SHA384 variants. Every browser offers none of them,
+which is why a mirrored browser cannot hit this. OpenSSL, GnuTLS and JSSE clients offer
+between six and thirty-two, always behind the AES-GCM, ChaCha20 and TLS 1.3 suites in
+the same hello, so an origin would have to prefer one of them over TLS 1.3 to trip it.
+Registration names them when it happens:
+
+```
+WARNING mitmcloak: mc-c14fc534d4ff offers 15 cipher(s) httpcloak cannot complete if the
+server selects one: 0x009f 0xccaa 0x00a3 ... They are still offered, so the fingerprint
+matches; only an origin that prefers one of them will fail.
+```
+
+Nothing is planned here. If a real origin is ever found that selects one, the fix is on
+httpcloak's side and this is the message that will point at it.
+
 **A mirrored Chromium's JA3 is stable per origin, where a real one changes per
 connection.** Chromium reorders its TLS extensions on every connection, so its JA3 hash
 differs each time while its JA4 stays constant. mitmcloak asks httpcloak to reproduce
