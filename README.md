@@ -1,48 +1,163 @@
-# mitmcloak
+<h1 align="center">mitmcloak</h1>
 
-Your browser behind mitmproxy already runs the site's JavaScript and produces genuine
-telemetry. That half was never broken. What breaks is that the telemetry then leaves over
-a **Python TLS handshake**, and real browser behaviour arriving on a Python ClientHello is
-a contradiction anyone can spot.
+<p align="center">
+  <a href="https://pypi.org/project/mitmcloak/"><img src="https://img.shields.io/pypi/v/mitmcloak" alt="PyPI"></a>
+  <a href="https://pypi.org/project/mitmcloak/"><img src="https://img.shields.io/pypi/pyversions/mitmcloak" alt="Python versions"></a>
+  <a href="https://github.com/sardanioss/mitmcloak/actions"><img src="https://github.com/sardanioss/mitmcloak/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
+</p>
 
-mitmcloak replaces mitmproxy's upstream leg with [httpcloak](https://github.com/sardanioss/httpcloak),
-so the bytes on the wire match the client that actually made the request.
+<p align="center">
+<i>Intercept the traffic. Keep the fingerprint.</i>
+</p>
 
-Headless Chromium fetching `https://tls.peet.ws/api/all`, three ways:
+<p align="center">
+An addon that gives mitmproxy's upstream leg a real browser's TLS and HTTP/2 fingerprint,<br>
+powered by <a href="https://github.com/sardanioss/httpcloak"><b>httpcloak</b></a>.
+</p>
+
+<br>
+
+---
+
+## The Problem
+
+Your browser behind mitmproxy runs the site's JavaScript and produces genuine telemetry.
+
+That half was never broken. The telemetry then leaves over a **Python TLS handshake** — and real browser behaviour arriving on a Python ClientHello is a contradiction anyone can spot.
+
+You did not get caught. Your proxy got caught, holding your session.
+
+## The Solution
+
+```bash
+pip install mitmcloak
+python -m mitmcloak install
+mitmdump                    # plain mitmdump, no -s flag
+```
+
+That is the whole setup. The origin now sees the client that actually made the request.
+
+---
+
+## Results
+
+Headless Chromium fetching `https://tls.peet.ws/api/all`, three ways. Same browser, same
+page, one line of difference in how mitmproxy was started.
 
 ```
-                    JA4                                     Akamai HTTP/2
-Chromium direct     t13d1516h2_8daaf6152771_806a8c22fdea    1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
-via plain mitmproxy t13d2812h2_a01be8c064b6_0d46a1bf4a7c    1:4096;2:0;4:2147483647;5:131072;8:0;3:100;6:65536|2147418112|0|m,s,p,a
-via mitmcloak       t13d1516h2_8daaf6152771_806a8c22fdea    1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p
+┌──────────────────────────────────────────────────────────────────┐
+│  JA4                                                             │
+├──────────────────────────────────────────────────────────────────┤
+│  Chromium direct        t13d1516h2_8daaf6152771_806a8c22fdea     │
+│  via plain mitmproxy    t13d2812h2_a01be8c064b6_0d46a1bf4a7c  ✗  │
+│  via mitmcloak          t13d1516h2_8daaf6152771_806a8c22fdea  ✓  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-Same browser, same page, one line of difference in how mitmproxy was started. The
-`peetprint` hash matches too. Through Cloudflare's own reflector
-(`workers.cloudflare.com/cf.json`) the negotiated cipher and the HTTP/2 priority signal
-match the direct browser as well, where plain mitmproxy's do not.
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  Akamai HTTP/2                                                                   │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  Chromium direct                                                                 │
+│      1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p                           │
+│                                                                                  │
+│  via plain mitmproxy                                                         ✗   │
+│      1:4096;2:0;4:2147483647;5:131072;8:0;3:100;6:65536|2147418112|0|m,s,p,a     │
+│                                                                                  │
+│  via mitmcloak                                                               ✓   │
+│      1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p                           │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Four connections, same browser                         │
+├─────────────────────────────────────────────────────────┤
+│  Chromium direct      4 distinct JA3, 1 JA4             │
+│  via mitmcloak        4 distinct JA3, 1 JA4        ✓    │
+└─────────────────────────────────────────────────────────┘
+```
+
+That last one is the part a snapshot cannot fake. Chromium reorders its TLS extensions on
+every connection, so its JA3 moves while its JA4 holds. A mirrored client does the same,
+because it reproduces the behaviour rather than one sample of it.
 
 It does not defeat challenges. It stops the proxy corrupting a session that was already
 legitimate.
 
-## It is a proxy, so the client can be written in anything
+---
 
-mitmcloak is a mitmproxy addon and mitmproxy is Python, so configuring it is Python — but
-[tiers 0 and 1](#configuration) are pure config and most users never write any. What sits
-in front of it is unconstrained: anything that can speak through an HTTP proxy gets the
-fingerprint, with no library and no code change.
+## What Gets Mirrored
 
-```
-Go      http.Transport{Proxy: ...}      Rust  reqwest .proxy()
-Java    -Dhttp.proxyHost                Node  HTTPS_PROXY=...
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🔐 TLS Layer
+
+- Raw ClientHello, replayed byte for byte
+- GREASE values, in their exact positions
+- Post-quantum `X25519MLKEM768` key shares
+- Extension permutation, fresh per handshake
+- Resumption-shaped hello for PSK
+- Extensions httpcloak has no model for
+
+</td>
+<td width="33%" valign="top">
+
+### 🚀 HTTP/2 Layer
+
+- SETTINGS frame values and their order
+- Connection WINDOW_UPDATE
+- Pseudo-header order (`m,a,s,p` vs `m,s,a,p`)
+- Stream priority
+- Protocol chosen per origin
+
+</td>
+<td width="33%" valign="top">
+
+### 🧠 Header Layer
+
+- Client's header order, per request
+- Exact casing (`X-FOO`, not `X-Foo`)
+- Repeated headers, in position
+- Preset header block when you want one
+- Response trailers (gRPC status)
+
+</td>
+</tr>
+</table>
+
+Measured against six clients, each compared direct and through the proxy:
+
+| client | JA4 | JA3N | Akamai H2 |
+|---|---|---|---|
+| curl (OpenSSL, 30 ciphers, no GREASE) | exact | exact | exact |
+| Chrome 151 Windows / iOS / Android | exact | exact | exact |
+| Firefox 148 / 133 | exact | exact | exact |
+
+---
+
+## Any Language, No Integration
+
+mitmcloak is a mitmproxy addon, so configuring it is Python — but tiers 0 and 1 are pure
+config and most users never write any. What sits **in front** of it is unconstrained.
+
+```bash
+Go      http.Transport{Proxy: ...}        Rust    reqwest .proxy()
+Java    -Dhttp.proxyHost                  Node    HTTPS_PROXY=...
 curl / PHP / Ruby / C# / a browser / a phone / an app
 ```
 
 That is wider than httpcloak's own reach, which is Python, Node, .NET and the C library.
-A Go or Rust service gets Chrome's TLS and HTTP/2 fingerprints by setting one
-environment variable. Two limits are the proxy's rather than mitmcloak's: a client
-speaking QUIC/HTTP3 bypasses an HTTP proxy entirely, and a client that pins certificates
-will not trust the CA.
+A Go or Rust service gets Chrome's TLS and HTTP/2 fingerprints by setting one environment
+variable and integrating nothing.
+
+Two limits are the proxy's rather than mitmcloak's: a client speaking QUIC/HTTP3 bypasses
+an HTTP proxy entirely, and a client that pins certificates will not trust the CA.
+
+---
 
 ## Install
 
@@ -58,7 +173,9 @@ flags. `python -m mitmcloak uninstall` puts it back.
 
 Prefer to be explicit? `mitmdump -s "$(python -m mitmcloak path)"`.
 
-## Mirror mode
+---
+
+## Mirror Mode
 
 By default mitmcloak reads the fingerprint of whatever client connected and reproduces it
 upstream. Point it at your phone, and the origin sees **your phone**, not a preset someone
@@ -79,7 +196,7 @@ Measured against six clients, each compared direct and through the proxy:
 Cost: about 2.6 ms once per *distinct* fingerprint, because preset names are
 content-addressed. It does not show up in the latency budget.
 
-### Cataloguing everything that goes past
+### Catalogue everything that goes past
 
 Mirroring only builds presets for clients we actually serve. Most of what a proxy sees is
 not that: a pinned app that refused the certificate, a background agent that made one
@@ -121,7 +238,7 @@ preface, so that layer comes from `based_on`.
 `mitmcloak.catalogue` lists what has been seen and `mitmcloak.catalogue.save <dir>` writes
 it out on demand.
 
-### Keeping a fingerprint without keeping the device
+### Keep a fingerprint without keeping the device
 
 ```bash
 mitmdump --set mitmcloak_export_dir=./presets
@@ -137,6 +254,8 @@ httpcloak.Session(preset=name).get("https://example.com/")
 ```
 
 Set the phone up once, export, then run from anywhere.
+
+---
 
 ## Configuration
 
@@ -201,7 +320,7 @@ stays the better answer.
 In `merge` and `replace` the client's header order is sent alongside the dict, but only
 when the preset was mirrored from that same client, for the same reason.
 
-### Per-flow rules use mitmproxy's own filter language
+### Per-flow rules, in mitmproxy's own filter language
 
 Not a syntax invented here, so `~d`, `~u`, `~m`, `~src` and the boolean operators all work
 and the separator can be any character:
@@ -213,7 +332,9 @@ and the separator can be any character:
 --set mitmcloak_bypass="~d internal\.corp"
 ```
 
-## Using it from Python
+---
+
+## From Python
 
 One line, and every `httpcloak.Session` keyword is forwarded untouched, so a new httpcloak
 release is usable without waiting for a mitmcloak release:
@@ -246,6 +367,8 @@ Custom JSON presets work here for free through `httpcloak.load_preset_from_json`
 worth knowing: httpcloak lets you describe a fingerprint down to the TLS extension, and
 mitmcloak does nothing to hide that.
 
+---
+
 ## Commands
 
 Available in the mitmproxy TUI and mitmweb, with tab completion:
@@ -263,7 +386,9 @@ mitmcloak.stats                   counters, including what was not bridged
 Bridged flows carry a `mitmcloak` entry in their metadata (preset, route, upstream
 protocol, timing), so `~meta` filters on it and mitmweb shows it.
 
-## Things worth knowing before you rely on it
+---
+
+## Before You Rely On It
 
 **Flows mitmproxy does not decrypt are not bridged.** `--ignore-hosts`, TLS passthrough
 when a client rejects your CA, and raw CONNECT tunnels reach the origin with the client's
@@ -360,7 +485,9 @@ cannot `dlopen` ([golang/go#54805](https://github.com/golang/go/issues/54805)). 
 image such as `python:3.12-slim`. mitmcloak raises a clear error at import rather than
 letting you find out later.
 
-## Proxy modes
+---
+
+## Proxy Modes
 
 | mode | status |
 |---|---|
@@ -409,10 +536,14 @@ silently bypassed and requests would leave from the real address while you belie
 otherwise. mitmcloak reads `--mode upstream:` and hands that proxy to httpcloak instead.
 An explicit `--set mitmcloak_proxy=` wins if you set both.
 
-## Load order
+---
+
+## Load Order
 
 mitmcloak's `request` hook runs in addon registration order, so load it **last** if you have
 other scripts that modify requests, otherwise their changes will not be included.
+
+---
 
 ## Development
 
@@ -424,6 +555,8 @@ pytest
 The unit tests need neither the network nor the cgo library: the wire parsing in
 `mitmcloak/capture.py` has no httpcloak import and is tested against captured ClientHello
 fixtures from Chrome, Firefox and curl.
+
+---
 
 ## Licence
 
