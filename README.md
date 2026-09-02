@@ -153,7 +153,7 @@ mitmdump --set mitmcloak_preset=chrome-151-windows \
 |---|---|---|
 | `mitmcloak_preset` | `chrome-151-windows` | preset used when not mirroring |
 | `mitmcloak_mode` | `auto` | `auto` mirrors when it can and falls back; `static` never mirrors; `mirror` refuses to fall back |
-| `mitmcloak_headers` | `merge` | `merge` keeps the client's values inside the preset's block; `replace` keeps only semantic headers |
+| `mitmcloak_headers` | `merge` | `merge` keeps the client's values inside the preset's block; `replace` keeps only semantic headers; `exact` sends the client's block verbatim and nothing else |
 | `mitmcloak_rule` | | per-flow preset, repeatable, first match wins |
 | `mitmcloak_bypass` | | flow filter for requests that should not be bridged |
 | `mitmcloak_preset_file` | | JSON preset to load at startup, repeatable |
@@ -172,6 +172,34 @@ mitmdump --set mitmcloak_preset=chrome-151-windows \
 | `mitmcloak_max_idle` | `300` | seconds before an idle upstream session is swept |
 | `mitmcloak_disable_ech` | `false` | disable Encrypted Client Hello upstream |
 | `mitmcloak_tls_only` | `false` | keep the preset's TLS but not its headers |
+
+### Header modes
+
+`merge` and `replace` hand httpcloak a dict, and a dict cannot hold two `Cookie` headers
+or remember that the client wrote `X-FOO`. `exact` hands over ordered pairs instead:
+order, casing and repeated names all survive, and httpcloak adds nothing of its own.
+
+Measured through the proxy, the same curl request with `Cookie: a=1`, `X-ODD-CASE: 1`,
+`Cookie: b=2`:
+
+```
+merge   Host, Connection, sec-ch-ua-platform, User-Agent, sec-ch-ua, sec-ch-ua-mobile,
+        Accept, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, Accept-Encoding,
+        Accept-Language, Cookie, X-Odd-Case
+exact   Host, Cookie, X-ODD-CASE, Cookie, User-Agent, Accept
+```
+
+`Host` is protocol framing that httpcloak writes itself. Everything after it in the
+second line is exactly what the client sent, both `Cookie` headers included, in their
+original interleaved positions.
+
+The trade is that `exact` discards the preset's header block entirely, so it is right
+when the client in front of the proxy *is* the client you are impersonating, and wrong
+when it is not. Mirror mode is the case it was built for. Under a static preset, `merge`
+stays the better answer.
+
+In `merge` and `replace` the client's header order is sent alongside the dict, but only
+when the preset was mirrored from that same client, for the same reason.
 
 ### Per-flow rules use mitmproxy's own filter language
 
@@ -277,17 +305,6 @@ matches; only an origin that prefers one of them will fail.
 Nothing is planned here. If a real origin is ever found that selects one, the fix is on
 httpcloak's side and this is the message that will point at it.
 
-**A mirrored Chromium's JA3 is stable per origin, where a real one changes per
-connection.** Chromium reorders its TLS extensions on every connection, so its JA3 hash
-differs each time while its JA4 stays constant. mitmcloak asks httpcloak to reproduce
-that, and httpcloak reseeds the shuffle once per session rather than once per connection,
-so a pooled session gives one origin one order. Measured with four connections to the
-same reflector: the browser direct produced four JA3 hashes and one JA4, through
-mitmcloak one JA3 and the same JA4. `--set mitmcloak_session_scope=connection` restores
-the rotation today, at the cost of connection reuse and TLS resumption. Everything JA4,
-JA3N and the Akamai HTTP/2 string measure is unaffected either way, since all three
-normalise ordering.
-
 All three fail at or before the handshake, which is earlier than mitmcloak acts. Plain
 mitmproxy behaves identically.
 
@@ -302,11 +319,12 @@ and API requests have already gone through.
 **Bodies are buffered**, matching stock mitmproxy, which sets `stream_large_bodies` to
 `None` by default. Requests over `mitmcloak_max_body` are handed back unbridged and counted.
 
-**Header fidelity is capped at `merge` for now.** httpcloak has an exact-headers mode
-that emits an ordered list of pairs verbatim, which is what a mirror wants, but it is only
-on the synchronous request path. mitmcloak uses `request_async` exclusively, because a
-blocking call would stall mitmproxy's event loop for the whole upstream round trip. Once
-`request_async` accepts `exact_headers`, a `headers=exact` mode becomes a small change.
+**Response trailers reach an HTTP/2 client and not an HTTP/1.1 one.** HTTP/1.1 can carry
+a trailer block only on a chunked response, and the body arrives from httpcloak already
+decoded, so the response goes out with a `Content-Length`. Handing mitmproxy trailers in
+that state raises in its HTTP/1 layer rather than degrading, so they are dropped and
+counted as `trailers_dropped_h1`. gRPC is HTTP/2-only, so the case that needs them is the
+case that gets them.
 
 **Memory tracks live sessions, not traffic.** An httpcloak session costs roughly 190 kB,
 and closing one does **not** return that memory to the operating system. Peak usage

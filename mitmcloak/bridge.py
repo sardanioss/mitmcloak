@@ -92,6 +92,7 @@ class Bridge:
         self.stats = {
             "bridged": 0, "mirrored": 0, "static": 0, "rule": 0, "supplied": 0,
             "errors": 0, "timeouts": 0, "server_connects": 0,
+            "trailers": 0, "trailers_dropped_h1": 0,
             "passthrough_websocket": 0, "passthrough_body": 0,
             "passthrough_bypass": 0, "passthrough_other": 0,
             "captured_hellos": 0, "captured_h2": 0,
@@ -432,9 +433,9 @@ class Bridge:
             response = await session.request_async(
                 flow.request.method,
                 flow.request.url,
-                headers=hdrs.request_headers(flow.request.headers.fields, self._header_mode()) or None,
                 data=body or None,
                 timeout=ctx.options.mitmcloak_timeout,
+                **self._header_kwargs(flow, decision),
             )
         except asyncio.CancelledError:
             raise                                      # client went away; Go side cancels too
@@ -452,6 +453,23 @@ class Bridge:
 
         resp = http.Response.make(response.status_code, bytes(response.content or b""))
         resp.headers = http.Headers(hdrs.response_pairs(response.headers))
+        trailers = hdrs.trailer_pairs(getattr(response, "trailer", None))
+        if trailers:
+            # gRPC answers 200 in the header block and puts the call's real status in
+            # the trailers, so dropping them reports every failed call as a success.
+            #
+            # Only to a client speaking HTTP/2 or HTTP/3. HTTP/1.1 can carry a trailer
+            # block only on a chunked response, and the body reaches us from httpcloak
+            # already decoded, so we answer with Content-Length. Handing mitmproxy
+            # trailers in that state is not a degraded response, it is an
+            # AssertionError in its HTTP/1 layer that kills the connection. gRPC is
+            # HTTP/2-only anyway, so nothing that relies on trailers arrives here on
+            # HTTP/1.1; the counter is there so the drop is visible if it ever does.
+            if flow.request.http_version.startswith("HTTP/1"):
+                self.stats["trailers_dropped_h1"] += 1
+            else:
+                resp.trailers = http.Headers(trailers)
+                self.stats["trailers"] += 1
         if getattr(response, "protocol", None):
             resp.http_version = _wire_version(response.protocol)
         flow.response = resp
@@ -588,6 +606,30 @@ class Bridge:
 
     def _header_mode(self) -> str:
         return ctx.options.mitmcloak_headers
+
+    def _header_kwargs(self, flow, decision) -> dict:
+        """How the client's headers reach httpcloak, which depends on the mode.
+
+        `exact` hands over ordered pairs and nothing else: casing, order and repeated
+        names all survive, and httpcloak adds none of its own. That is the only form
+        that reproduces a captured request, and it is also the only one that discards
+        the preset's header block, so it is right when the client in front of us is the
+        client we are impersonating and wrong when it is not.
+
+        `merge` and `replace` go through the dict, which cannot carry order, so the
+        order is sent alongside. It is sent only when the preset was mirrored from this
+        same client: then its order is the truth. Under a static preset the client is
+        some other program, and forcing its order onto a browser's header block would
+        describe a client that does not exist.
+        """
+        fields = flow.request.headers.fields
+        mode = self._header_mode()
+        if mode == "exact":
+            return {"exact_headers": hdrs.exact_headers(fields) or None}
+        kwargs: dict = {"headers": hdrs.request_headers(fields, mode) or None}
+        if decision.reason == "mirror":
+            kwargs["header_order"] = hdrs.header_order(fields) or None
+        return kwargs
 
     # ----------------------------------------------------------------- commands
 

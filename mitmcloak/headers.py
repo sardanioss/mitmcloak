@@ -25,7 +25,7 @@ SEMANTIC = frozenset({
     "accept", "content-encoding",
 })
 
-MODES = ("merge", "replace")
+MODES = ("merge", "replace", "exact")
 
 
 def request_headers(fields: Iterable[tuple[bytes, bytes]], mode: str) -> dict[str, str]:
@@ -56,6 +56,27 @@ def request_headers(fields: Iterable[tuple[bytes, bytes]], mode: str) -> dict[st
     return out
 
 
+def exact_headers(fields: Iterable[tuple[bytes, bytes]]) -> list[tuple[str, str]]:
+    """The client's header block verbatim: order, casing and duplicates all kept.
+
+    This is the one form that loses nothing. `request_headers` returns a dict, and a
+    dict cannot hold two Cookie headers or remember that the client wrote `X-FOO`
+    rather than `X-Foo`, so both are gone before httpcloak sees them.
+
+    Hop-by-hop headers are still dropped, because they describe the client-to-proxy
+    connection and forwarding them is a proxy bug rather than a fidelity gain. Host and
+    the pseudo-header block are dropped for a different reason: httpcloak writes those
+    itself as protocol framing, so listing them again would put two of each on the wire.
+    """
+    out: list[tuple[str, str]] = []
+    for raw_name, raw_value in fields:
+        name = raw_name.decode("latin-1")
+        if name.lower() in HOP_BY_HOP:
+            continue
+        out.append((name, raw_value.decode("latin-1")))
+    return out
+
+
 def header_order(fields: Iterable[tuple[bytes, bytes]]) -> list[str]:
     """The client's header order, lowercased, duplicates removed, hop-by-hop stripped."""
     seen: list[str] = []
@@ -77,6 +98,21 @@ def response_pairs(headers: Any) -> list[tuple[bytes, bytes]]:
     for name, value in (headers or {}).items():
         if name.lower() in RESPONSE_DROP:
             continue
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for item in values:
+            pairs.append((name.encode("latin-1"), str(item).encode("latin-1")))
+    return pairs
+
+
+def trailer_pairs(trailer: Any) -> list[tuple[bytes, bytes]]:
+    """Flatten httpcloak's response trailer block into ordered byte pairs.
+
+    Empty when the response carried none. Worth forwarding because gRPC puts the call's
+    real status in the trailers and answers 200 in the header block either way, so a
+    proxy that drops them turns every failed call into a success.
+    """
+    pairs: list[tuple[bytes, bytes]] = []
+    for name, value in (trailer or {}).items():
         values = value if isinstance(value, (list, tuple)) else [value]
         for item in values:
             pairs.append((name.encode("latin-1"), str(item).encode("latin-1")))

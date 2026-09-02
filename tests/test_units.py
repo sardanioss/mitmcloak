@@ -332,3 +332,97 @@ def test_zero_hit_rate_is_detectable():
     assert pool.reused == 0
     assert pool.created == 40
     assert pool.evicted == 36
+
+
+# --------------------------------------------------------------- exact headers
+
+RAW_FIELDS = [
+    (b"Host", b"example.com"), (b"Cookie", b"a=1"), (b"X-ODD-CASE", b"1"),
+    (b"Cookie", b"b=2"), (b"User-Agent", b"probe/1"),
+    (b"Connection", b"keep-alive"), (b"Content-Length", b"0"),
+]
+
+
+def test_exact_headers_keep_order_casing_and_duplicates():
+    """The three things a dict destroys. Measured through the proxy: an origin sees
+    Cookie, X-ODD-CASE, Cookie in that order, where merge mode sends one Cookie and
+    X-Odd-Case."""
+    got = hdrs.exact_headers(RAW_FIELDS)
+    assert got == [
+        ("Cookie", "a=1"), ("X-ODD-CASE", "1"), ("Cookie", "b=2"),
+        ("User-Agent", "probe/1"),
+    ]
+
+
+def test_exact_headers_still_drop_hop_by_hop_and_framing():
+    """Forwarding a hop-by-hop header is a proxy bug, not fidelity, and httpcloak
+    writes Host itself, so listing it again puts two on the wire."""
+    names = [n.lower() for n, _ in hdrs.exact_headers(RAW_FIELDS)]
+    assert "host" not in names
+    assert "connection" not in names
+    assert "content-length" not in names
+
+
+def test_merge_mode_still_collapses_what_exact_mode_keeps():
+    """Not a regression: it is the reason exact mode exists."""
+    merged = hdrs.request_headers(RAW_FIELDS, "merge")
+    assert merged["Cookie"] == "a=1; b=2"       # two headers became one
+    assert len(hdrs.exact_headers(RAW_FIELDS)) == 4
+
+
+def test_exact_is_a_selectable_mode():
+    assert "exact" in hdrs.MODES
+
+
+# ------------------------------------------------------------------- trailers
+
+def test_trailer_pairs_flattens_repeated_names():
+    assert hdrs.trailer_pairs({"grpc-status": ["14"], "x-multi": ["a", "b"]}) == [
+        (b"grpc-status", b"14"), (b"x-multi", b"a"), (b"x-multi", b"b"),
+    ]
+
+
+def test_trailer_pairs_is_empty_when_there_were_none():
+    assert hdrs.trailer_pairs(None) == []
+    assert hdrs.trailer_pairs({}) == []
+
+
+# --------------------------------------------------------- how headers are sent
+
+class _Req:
+    def __init__(self, fields, version="HTTP/2.0"):
+        self.headers = type("H", (), {"fields": fields})()
+        self.http_version = version
+
+
+class _Flow:
+    def __init__(self, fields, version="HTTP/2.0"):
+        self.request = _Req(fields, version)
+
+
+class _Decision:
+    def __init__(self, reason):
+        self.reason = reason
+
+
+def _bridge(mode):
+    from mitmcloak.bridge import Bridge
+
+    b = Bridge()
+    b._header_mode = lambda: mode
+    return b
+
+
+def test_exact_mode_sends_pairs_and_nothing_else():
+    kwargs = _bridge("exact")._header_kwargs(_Flow(RAW_FIELDS), _Decision("mirror"))
+    assert list(kwargs) == ["exact_headers"]
+    assert kwargs["exact_headers"][0] == ("Cookie", "a=1")
+
+
+def test_header_order_is_sent_only_when_the_preset_mirrors_this_client():
+    """Under a static preset the client is some other program, and forcing its header
+    order onto a browser's header block describes a client that does not exist."""
+    mirrored = _bridge("merge")._header_kwargs(_Flow(RAW_FIELDS), _Decision("mirror"))
+    static = _bridge("merge")._header_kwargs(_Flow(RAW_FIELDS), _Decision("static"))
+    assert mirrored["header_order"] == ["cookie", "x-odd-case", "user-agent"]
+    assert "header_order" not in static

@@ -20,10 +20,11 @@ classifiers = [
 ]
 dependencies = [
   "mitmproxy>=11",
-  # Mirroring needs tls.raw_client_hello, which landed in 1.7.0. Below it the
-  # startup probe disables mirroring rather than silently serving the base
-  # preset's fingerprint, but the floor belongs in metadata too.
-  "httpcloak>=1.7.0",
+  # Mirroring needs tls.raw_client_hello (1.7.0). 1.7.1 adds three things nothing else
+  # can supply: exact_headers on the async path, per-request header order, and response
+  # trailers. It also permutes a captured hello per handshake rather than per seed,
+  # which is what makes a mirrored browser's JA3 rotate the way the real one does.
+  "httpcloak>=1.7.1",
 ]
 
 [project.optional-dependencies]
