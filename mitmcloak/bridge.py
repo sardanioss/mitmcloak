@@ -86,6 +86,7 @@ class Bridge:
         self._logged_passthrough: set[str] = set()
         self._preset_names: set | None = None
         self.mirror_supported: bool | None = None
+        self._warned_quic_mirror = False
         self._debug_mem = bool(os.environ.get("MITMCLOAK_DEBUG_MEM"))
         self._debug_every = int(os.environ.get("MITMCLOAK_DEBUG_MEM") or 0) or 100
 
@@ -508,11 +509,13 @@ class Bridge:
         profile = self._profiles.get(conn_id)
         if profile is None:
             return None
-        if profile.hello.is_quic and ctx.options.mitmcloak_http_version != "h3":
-            # A QUIC hello carries quic_transport_parameters and h3-only ALPN. Sending
-            # that over TCP is not a mirror, it is a shape no client produces.
-            self.stats["skipped_quic_hello"] += 1
-            return None
+        if profile.hello.is_quic:
+            if ctx.options.mitmcloak_http_version != "h3":
+                # A QUIC hello carries quic_transport_parameters and h3-only ALPN.
+                # Sending that over TCP is not a mirror, it is a shape no client makes.
+                self.stats["skipped_quic_hello"] += 1
+                return None
+            self._warn_quic_mirror_is_not_on_the_wire()
         # Built here rather than in tls_clienthello because the User-Agent, which is
         # the fallback signal for the base, does not exist until a request arrives.
         #
@@ -538,6 +541,29 @@ class Bridge:
             self._presets_for_conn[conn_id] = name
             self._export(name)
         return name
+
+    def _warn_quic_mirror_is_not_on_the_wire(self) -> None:
+        """Say once that an h3 mirror does not reach the wire.
+
+        httpcloak resolves a preset's captured hello in its HTTP/1.1 and HTTP/2
+        transports; the QUIC transport never consults it. The preset is minted from the
+        real hello and the request is genuinely bridged over HTTP/3, so the counters
+        below say "mirrored" and mean it about the preset. The handshake is not the
+        client's. Measured with curl against tls3.peet.ws: 13 extensions direct, 7
+        through here, six missing rather than reordered.
+
+        Reporting a mirror we cannot deliver is the one failure this project exists to
+        avoid, so it is said out loud rather than left to the counter.
+        """
+        if self._warned_quic_mirror:
+            return
+        self._warned_quic_mirror = True
+        logger.warning(
+            "mitmcloak: mirroring a QUIC client over HTTP/3 reproduces the preset but "
+            "not the handshake, because httpcloak resolves a captured hello on its TCP "
+            "transports only. The request is bridged and the fingerprint is not the "
+            "client's. Use a TCP upstream where the fingerprint is what matters."
+        )
 
     def _known_presets(self) -> set:
         if self._preset_names is None:

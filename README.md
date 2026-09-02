@@ -100,35 +100,40 @@ byte-identical, not "close enough".
 
 A proxy setting only redirects TCP, so a client speaking QUIC never reaches the proxy at
 all. That is why an app can keep working normally while mitmproxy shows nothing from it.
-Getting QUIC in is a mitmproxy mode question; once it is in, mitmcloak bridges it.
+`wireguard` and `transparent` carry UDP, so QUIC from a device arrives; `reverse:http3://`
+works for a fixed origin.
 
 ```bash
-mitmdump --mode wireguard --set mitmcloak_http_version=h3      # a device, over the tunnel
+mitmdump --mode wireguard --set mitmcloak_http_version=h3
 mitmdump --mode reverse:http3://example.com --set mitmcloak_http_version=h3
 ```
 
-`wireguard` and `transparent` carry UDP, so QUIC from a device arrives. `mitmcloak_http_version=h3`
-makes the upstream leg negotiate QUIC rather than TCP.
+The request is bridged: the QUIC hello is captured, a preset is minted from it, and the
+upstream leg goes out over HTTP/3 (`bridged=1 mirrored=1`, response `ver=3`).
 
-Verified with curl over HTTP/3 through `reverse:http3://`: the response comes back
-`ver=3`, the counters read `bridged=1 mirrored=1`, and the minted preset carries the
-client's real QUIC hello rather than a TCP one:
+**The h3 leg is not yet mirrored on the wire.** httpcloak resolves a preset's captured
+hello in its HTTP/1.1 and HTTP/2 transports only; the QUIC transport never consults it.
+Measured against `tls3.peet.ws` over h3, with curl as the client:
 
 ```text
-is_quic=True   alpn=['h3', 'h3-29']   quic_transport_parameters=present   ciphers=3
+curl, direct              q13d313_55b375c5d22e_19cb63ff0383   13 extensions
+through mitmcloak         q13d37_55b375c5d22e_4ca1098a2eeb     7 extensions
 ```
 
-That preset needs `allow_blunt_mimicry`, because `quic_transport_parameters` is an
-extension httpcloak has no model for and it goes on the wire verbatim instead.
+Six extensions are missing rather than reordered: `compress_certificate`,
+`ec_point_formats`, `encrypt_then_mac`, `extended_master_secret`, `post_handshake_auth`
+and `psk_key_exchange_modes`. The cipher hash agrees because every QUIC client offers the
+same three TLS 1.3 suites, so that half proves nothing. JA3 is also frozen across
+connections where a real client rotates.
+
+So h3 today gives you interception and an HTTP/3 upstream, not the client's fingerprint.
+mitmcloak logs a warning when you turn it on rather than reporting a mirror it cannot
+deliver. Use TCP where the fingerprint is what matters, until httpcloak wires the raw
+hello into its QUIC transport.
 
 **Use `http3://`, not `quic://`.** They are different mitmproxy schemes. `quic://` is a
-raw QUIC tunnel with no HTTP parsing, so no request hook fires, nothing is bridged, and
-the leg leaves with mitmproxy's own fingerprint. The counters say so plainly: `quic://`
-gives `captured_hellos=1` and no `bridged`, where `http3://` gives `bridged=1 mirrored=1`.
-
-A captured QUIC hello is only replayed when the upstream is `h3`. Otherwise it is skipped
-and counted as `skipped_quic_hello`, because a hello carrying `quic_transport_parameters`
-and h3-only ALPN, sent over TCP, is a shape no client produces.
+raw QUIC tunnel with no HTTP parsing, so no request hook fires and nothing is bridged at
+all: `captured_hellos=1` and no `bridged`, where `http3://` gives `bridged=1 mirrored=1`.
 
 ## Any client, any language
 
