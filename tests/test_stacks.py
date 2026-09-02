@@ -150,16 +150,17 @@ def test_permutation_is_not_declared_for_a_stack_that_does_not(fake_httpcloak):
     assert "permute_raw_hello" not in fake.loaded[0]["preset"]["tls"]
 
 
-def test_blunt_mimicry_drops_the_shuffle(fake_httpcloak):
-    """httpcloak ignores permute_raw_hello under blunt mimicry, so sending both would
-    describe a preset that does not exist. A real frozen order beats a shuffled one
-    built from extensions we could not model."""
+def test_blunt_mimicry_no_longer_drops_the_shuffle(fake_httpcloak):
+    """httpcloak used to ignore the shuffle under blunt mimicry, so we dropped it rather
+    than describe a preset that could not exist. It moves unmodelled extensions now, and
+    the case that needed blunt mimicry is exactly the case that was frozen: every QUIC
+    hello carries one."""
     fake = fake_httpcloak(reject_extensions={22})
     profile = mirror.ClientProfile(hello=_hello("node-22-openssl"))
     mirror.MirrorRegistry().ensure(profile, "chrome-151-windows", base_permutes=True)
     tls = fake.loaded[-1]["preset"]["tls"]
     assert tls["allow_blunt_mimicry"] is True
-    assert "permute_raw_hello" not in tls
+    assert tls["permute_raw_hello"] is True
 
 
 def test_a_client_that_starts_permuting_gets_a_new_preset(fake_httpcloak):

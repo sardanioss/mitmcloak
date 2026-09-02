@@ -115,6 +115,12 @@ def build_preset(
     guessed here: the caller sets it after a registration has actually been refused,
     so the list of modelled extensions never has to be mirrored and can never drift.
 
+    blunt and permute compose. They did not always: httpcloak ignored the shuffle under
+    blunt mimicry until it learned to move extensions it has no model for, so a capture
+    needing blunt mimicry was frozen. Emitting both is now correct, and it matters most
+    exactly where it used to be dropped, since every QUIC hello carries an extension the
+    library may not model.
+
     permute reshuffles the extension order, which Chromium does on every connection.
     Measured against httpcloak 1.7.0, a captured hello reseeds per session and not per
     connection: six connections through one session send one order, six sessions send
@@ -123,16 +129,13 @@ def build_preset(
     it every origin sees the same order and correlating them is trivial, but it is not
     yet what the browser does.
 
-    httpcloak ignores permute when blunt mimicry is on, since an extension it cannot
-    model cannot be safely moved, so the two are never emitted together: a frozen order
-    that is real beats a shuffled one built out of extensions we could not reproduce.
     """
     tls: dict = {"raw_client_hello": profile.hello.raw_b64}
     if profile.psk_hello is not None:
         tls["raw_psk_client_hello"] = profile.psk_hello.raw_b64
     if blunt:
         tls["allow_blunt_mimicry"] = True
-    elif permute:
+    if permute:
         tls["permute_raw_hello"] = True
 
     spec: dict = {"name": name, "based_on": base, "tls": tls}
@@ -247,7 +250,7 @@ class MirrorRegistry:
         doc = build_preset(profile, base, name, permute=permute)
         registered = self._register(doc, name)
         if registered is _UNSUPPORTED_EXTENSION:
-            doc = build_preset(profile, base, name, blunt=True)
+            doc = build_preset(profile, base, name, blunt=True, permute=permute)
             registered = self._register(doc, name)
             if registered is True:
                 logger.info(
