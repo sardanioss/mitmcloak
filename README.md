@@ -368,7 +368,40 @@ letting you find out later.
 | `socks5` | works, with mirroring |
 | `upstream:...` | works; the upstream proxy is handed to httpcloak, see below |
 | `reverse:...` | works, but the client speaks plain HTTP to the local port, so there is no ClientHello to mirror and the static preset governs |
-| `transparent`, `wireguard`, `local` | untested |
+| `transparent` | works, with mirroring; verified against an origin that reports the ClientHello it saw |
+| `wireguard` | works, with mirroring; same verification, through the tunnel |
+| `local` | needs real root and is untested here, see below |
+
+**On transparent and wireguard.** Both were verified in an isolated network namespace
+against a local TLS origin that parses the ClientHello it receives and reports its
+identity, so the check is that the client's own fingerprint arrives, not merely that a
+200 comes back:
+
+```
+                                    origin saw
+curl straight to the origin         stable_id=c48b918794d3  30 ciphers
+curl through plain mitmproxy        stable_id=da93061cb016  28 ciphers
+curl through mitmcloak              stable_id=c48b918794d3  30 ciphers
+```
+
+Transparent mode was tested the way it is deployed, as a gateway for a second namespace
+with the redirect in `PREROUTING`. That detail matters: a `-t nat -A OUTPUT` redirect on
+the same host also catches httpcloak's own upstream dial and loops it back into the
+proxy. WireGuard mode was tested with a real kernel `wg0` client completing a handshake
+against mitmproxy's server. Both reported `bridged=1 mirrored=1`, so nothing looped.
+
+**On local mode.** It shells out to `sudo -n` to run `mitmproxy-linux-redirector`, which
+loads an eBPF program, and root inside a user namespace is not enough because `sudo`
+itself rejects the mapped uid. Untested here for that reason. Worth knowing how it fails
+if you do not have passwordless sudo, because it fails in the good direction:
+
+```
+[..] Failed to elevate privileges
+Error logged during startup, exiting...
+```
+
+It exits at startup rather than starting and quietly forwarding traffic unintercepted,
+so there is no state where you believe you are bridging and are not.
 
 **On upstream mode.** mitmproxy would normally forward everything to the proxy you named,
 but the short circuit means it never gets that far. Left alone, your proxy would be
