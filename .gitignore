@@ -4,7 +4,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-research/poc/captured_*.json
 .mitmproxy/
 .pytest_cache/
 *.patch
