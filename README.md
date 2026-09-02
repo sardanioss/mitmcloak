@@ -89,16 +89,16 @@ byte-identical, not "close enough".
 
 | client | JA4 | JA3N | Akamai H2 |
 |---|:---:|:---:|:---:|
-| curl — OpenSSL, 30 ciphers, no GREASE | exact | exact | exact |
-| Chrome 151 — Windows · iOS · Android | exact | exact | exact |
-| Firefox 148 · 133 | exact | exact | exact |
+| curl | exact | exact | exact |
+| Chrome | exact | exact | exact |
+| Firefox | exact | exact | exact |
 
 ## Your client can be written in anything
 
 It is a proxy, so what sits in front of it is unconstrained. A Go or Rust service gets
 Chrome's TLS and HTTP/2 fingerprints by setting one environment variable and integrating
-nothing — wider reach than httpcloak has on its own, which is Python, Node, .NET and the
-C library.
+nothing. That is wider reach than httpcloak has on its own, which is Python, Node, .NET
+and the C library.
 
 ```bash
 Go    http.Transport{Proxy: …}     Rust  reqwest .proxy()
@@ -113,7 +113,7 @@ an HTTP proxy entirely, and a client that pins certificates will not trust the C
 
 
 <details>
-<summary><b>Mirror mode — and keeping what it sees</b></summary>
+<summary><b>Mirror mode, and keeping what it sees</b></summary>
 <br>
 
 By default mitmcloak reads the fingerprint of whatever client connected and reproduces it
@@ -128,9 +128,9 @@ Measured against six clients, each compared direct and through the proxy:
 
 | client | JA4 | JA3N | Akamai H2 |
 |---|---|---|---|
-| curl (OpenSSL, 30 ciphers, no GREASE) | exact | exact | exact |
-| Chrome 151 Windows / iOS / Android | exact | exact | exact |
-| Firefox 148 / 133 | exact | exact | exact |
+| curl | exact | exact | exact |
+| Chrome | exact | exact | exact |
+| Firefox | exact | exact | exact |
 
 Cost: about 2.6 ms once per *distinct* fingerprint, because preset names are
 content-addressed. It does not show up in the latency budget.
@@ -387,7 +387,7 @@ An explicit `--set mitmcloak_proxy=` wins if you set both.
 </details>
 
 <details>
-<summary><b>Before you rely on it — every limitation, measured</b></summary>
+<summary><b>Before you rely on it: every limitation, measured</b></summary>
 <br>
 
 **Flows mitmproxy does not decrypt are not bridged.** `--ignore-hosts`, TLS passthrough
