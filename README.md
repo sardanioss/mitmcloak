@@ -54,18 +54,13 @@ It reproduces the behaviour, not one sample of it.
 
 ## How
 
-```mermaid
-flowchart LR
-    C["client<br/>browser · phone · app"]
-    subgraph P ["mitmproxy + mitmcloak"]
-        direction TB
-        R["read<br/>ClientHello + H2 preface"]
-        B["rebuild<br/>preset minted at runtime"]
-        R --> B
-    end
-    O["origin"]
-    C -- "its own fingerprint" --> R
-    B -- "the very same fingerprint" --> O
+```
+    client                    mitmproxy + mitmcloak                      origin
+┌───────────┐        ┌──────────────────────────────────────┐        ┌────────────┐
+│  browser  │        │  read              mint a preset     │        │  sees the  │
+│  phone    │ ─────▶ │  ClientHello  ──▶  at runtime and    │ ─────▶ │  client's  │
+│  app      │        │  and H2 preface    serve through it  │        │  own TLS   │
+└───────────┘        └──────────────────────────────────────┘        └────────────┘
 ```
 
 No capture phase and no guessing: the client's real handshake is read on the way in and
