@@ -14,10 +14,7 @@ def _fixture_dir() -> Path:
     wheel as well as a checkout."""
     import mitmcloak
 
-    packaged = Path(mitmcloak.__file__).parent / "data"
-    if (packaged / "client_hellos.json").exists():
-        return packaged
-    return Path(__file__).resolve().parent.parent / "research" / "fixtures"
+    return Path(mitmcloak.__file__).parent / "data"
 
 
 def _chrome():
@@ -187,22 +184,22 @@ def test_identity_ignores_sni_presence():
 
 
 def test_real_iphone_capture_identifies_as_ios():
-    """Locks the device result: a physical iPhone's stack must resolve to the iOS preset."""
-    device = Path(__file__).resolve().parent.parent / "research" / "fixtures" / "device"
-    captures = sorted(device.glob("*.json"))
-    if not captures:
-        pytest.skip("no device capture fixture")
-    for path in captures:
-        doc = json.loads(path.read_text())["preset"]
-        info = capture.parse_client_hello(
-            base64.b64decode(doc["tls"]["raw_client_hello"])
-        )
-        # Every hello the iPhone produced, Safari and system agents alike, is Apple's
-        # stack and must land on one family.
-        assert info.family_id == capture.parse_client_hello(
-            base64.b64decode(json.loads(captures[0].read_text())
-                             ["preset"]["tls"]["raw_client_hello"])
-        ).family_id
+    """Locks the device result: a physical iPhone's stack resolves to the iOS family.
+
+    The hostname in this capture was replaced with a placeholder of the same length, so
+    every length prefix in the record still holds and the fingerprint is untouched.
+    `family_id` excludes server_name anyway, since whether a client sends one is a
+    property of the request rather than of the client.
+    """
+    data = json.loads((_fixture_dir() / "client_hellos.json").read_text())
+    info = capture.parse_client_hello(
+        base64.b64decode(data["apple-ios-device"]["client_hello_b64"])
+    )
+    ios = capture.parse_client_hello(
+        base64.b64decode(data["chrome-151-windows"]["client_hello_b64"])
+    )
+    assert info.family_id == "3f3507d55987"
+    assert info.family_id != ios.family_id
 
 
 def test_pinned_client_profile_is_still_a_usable_preset():

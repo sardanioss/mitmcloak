@@ -12,10 +12,7 @@ def _fixture_dir() -> Path:
     wheel as well as a checkout."""
     import mitmcloak
 
-    packaged = Path(mitmcloak.__file__).parent / "data"
-    if (packaged / "client_hellos.json").exists():
-        return packaged
-    return Path(__file__).resolve().parent.parent / "research" / "fixtures"
+    return Path(mitmcloak.__file__).parent / "data"
 
 
 def _hellos():

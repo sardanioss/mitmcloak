@@ -8,3 +8,8 @@ research/poc/captured_*.json
 .mitmproxy/
 .pytest_cache/
 *.patch
+
+# Working notes, measurements, device captures and handover specs. Useful to keep
+# locally, not part of what anyone installs or clones.
+research/
+captures/

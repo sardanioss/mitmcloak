@@ -19,11 +19,8 @@ from mitmcloak import capture, mirror
 def _fixtures() -> dict:
     import mitmcloak
 
-    packaged = Path(mitmcloak.__file__).parent / "data" / "client_hellos.json"
-    if not packaged.exists():
-        packaged = (Path(__file__).resolve().parent.parent
-                    / "research" / "fixtures" / "client_hellos.json")
-    data = json.loads(packaged.read_text())
+    data = json.loads(
+        (Path(mitmcloak.__file__).parent / "data" / "client_hellos.json").read_text())
     data.pop("_note", None)
     return data
 
@@ -60,6 +57,7 @@ UNNEGOTIABLE = {
     "node-22-openssl": 32,
     "wget-1.25-gnutls": 12,
     "java-26-jsse": 15,
+    "apple-ios-device": 1,
 }
 
 
